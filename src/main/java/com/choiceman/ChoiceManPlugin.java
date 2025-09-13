@@ -46,8 +46,7 @@ import java.util.stream.Collectors;
         tags = {"unlock", "ironman", "rules", "ge", "shops", "overlay", "runelite"}
 )
 @Slf4j
-public class ChoiceManPlugin extends Plugin
-{
+public class ChoiceManPlugin extends Plugin {
     // GE script/ids used to prune results
     private static final int GE_SEARCH_BUILD_SCRIPT = 751;
     private static final int GE_GROUP_ID = 162;
@@ -61,25 +60,45 @@ public class ChoiceManPlugin extends Plugin
     // Pending choice presentations across callbacks
     private final AtomicInteger pendingChoices = new AtomicInteger(0);
 
-    @Inject private Client client;
-    @Inject private ClientThread clientThread;
-    @Inject private EventBus eventBus;
-    @Inject private ClientToolbar clientToolbar;
-    @Inject private OverlayManager overlayManager;
-    @Inject private MouseManager mouseManager;
-    @Getter @Inject private ItemManager itemManager;
-    @Inject private Gson gson; // RuneLite's Gson (injected)
-    @Inject private ChoiceManConfig config;
-    @Inject private ChoiceManOverlay choiceManOverlay;
-    @Inject private UnlocksTooltipOverlay unlocksTooltipOverlay;
-    @Inject private ItemDimmerController itemDimmerController;
-    @Inject private ActionHandler actionHandler;
-    @Inject private Restrictions restrictions;
-    @Inject private UnlocksWidgetController unlocksWidgetController;
-    @Inject private MusicOpenButton musicOpenButton;
-    @Inject private TabListener tabListener;
-    @Inject private ItemsRepository itemsRepo;
-    @Inject private ChoiceManUnlocks unlocks;
+    @Inject
+    private Client client;
+    @Inject
+    private ClientThread clientThread;
+    @Inject
+    private EventBus eventBus;
+    @Inject
+    private ClientToolbar clientToolbar;
+    @Inject
+    private OverlayManager overlayManager;
+    @Inject
+    private MouseManager mouseManager;
+    @Getter
+    @Inject
+    private ItemManager itemManager;
+    @Inject
+    private Gson gson; // RuneLite's Gson (injected)
+    @Inject
+    private ChoiceManConfig config;
+    @Inject
+    private ChoiceManOverlay choiceManOverlay;
+    @Inject
+    private UnlocksTooltipOverlay unlocksTooltipOverlay;
+    @Inject
+    private ItemDimmerController itemDimmerController;
+    @Inject
+    private ActionHandler actionHandler;
+    @Inject
+    private Restrictions restrictions;
+    @Inject
+    private UnlocksWidgetController unlocksWidgetController;
+    @Inject
+    private MusicOpenButton musicOpenButton;
+    @Inject
+    private TabListener tabListener;
+    @Inject
+    private ItemsRepository itemsRepo;
+    @Inject
+    private ChoiceManUnlocks unlocks;
 
     private ChoiceManPanel choiceManPanel;
     private NavigationButton navButton;
@@ -90,24 +109,23 @@ public class ChoiceManPlugin extends Plugin
     private volatile int lastKnownTotal = -1;
     private volatile boolean baselineReady = false;
 
-    /** Number of offer cards scales with total level. */
-    private static int choiceCountForTotal(int total)
-    {
+    /**
+     * Number of offer cards scales with total level.
+     */
+    private static int choiceCountForTotal(int total) {
         if (total >= 1000) return 5;
-        if (total >= 500)  return 4;
-        if (total >= 200)  return 3;
+        if (total >= 500) return 4;
+        if (total >= 200) return 3;
         return 2;
     }
 
     @Provides
-    ChoiceManConfig provideConfig(ConfigManager configManager)
-    {
+    ChoiceManConfig provideConfig(ConfigManager configManager) {
         return configManager.getConfig(ChoiceManConfig.class);
     }
 
     @Override
-    protected void startUp()
-    {
+    protected void startUp() {
         itemsRepo.loadFromResources(gson);
         eventBus.register(this);
         if (isNormalWorld()) {
@@ -116,17 +134,17 @@ public class ChoiceManPlugin extends Plugin
     }
 
     @Override
-    protected void shutDown()
-    {
+    protected void shutDown() {
         if (featuresActive) {
             disableFeatures();
         }
         eventBus.unregister(this);
     }
 
-    /** Enable overlays, gating, panel, and music-tab integrations for normal worlds. */
-    private void enableFeatures()
-    {
+    /**
+     * Enable overlays, gating, panel, and music-tab integrations for normal worlds.
+     */
+    private void enableFeatures() {
         if (featuresActive) return;
         featuresActive = true;
 
@@ -184,9 +202,10 @@ public class ChoiceManPlugin extends Plugin
         SwingUtilities.invokeLater(() -> choiceManPanel.refresh(unlocks));
     }
 
-    /** Disable overlays, panel, and event subscriptions. */
-    private void disableFeatures()
-    {
+    /**
+     * Disable overlays, panel, and event subscriptions.
+     */
+    private void disableFeatures() {
         if (!featuresActive) return;
         featuresActive = false;
 
@@ -196,11 +215,31 @@ public class ChoiceManPlugin extends Plugin
             log.debug("Restore unlocks view failed", ex);
         }
 
-        try { actionHandler.shutDown(); } catch (Exception ex) { log.debug("ActionHandler shutdown failed", ex); }
-        try { eventBus.unregister(itemDimmerController); } catch (Exception ex) { log.debug("Unregister dimmer failed", ex); }
-        try { musicOpenButton.onStop(); } catch (Exception ex) { log.debug("MusicOpenButton stop failed", ex); }
-        try { eventBus.unregister(musicOpenButton); } catch (Exception ex) { log.debug("Unregister musicOpenButton failed", ex); }
-        try { eventBus.unregister(tabListener); } catch (Exception ex) { log.debug("Unregister tabListener failed", ex); }
+        try {
+            actionHandler.shutDown();
+        } catch (Exception ex) {
+            log.debug("ActionHandler shutdown failed", ex);
+        }
+        try {
+            eventBus.unregister(itemDimmerController);
+        } catch (Exception ex) {
+            log.debug("Unregister dimmer failed", ex);
+        }
+        try {
+            musicOpenButton.onStop();
+        } catch (Exception ex) {
+            log.debug("MusicOpenButton stop failed", ex);
+        }
+        try {
+            eventBus.unregister(musicOpenButton);
+        } catch (Exception ex) {
+            log.debug("Unregister musicOpenButton failed", ex);
+        }
+        try {
+            eventBus.unregister(tabListener);
+        } catch (Exception ex) {
+            log.debug("Unregister tabListener failed", ex);
+        }
 
         try {
             overlayManager.remove(choiceManOverlay);
@@ -210,15 +249,23 @@ public class ChoiceManPlugin extends Plugin
         }
 
         if (overlayMouse != null) {
-            try { mouseManager.unregisterMouseListener(overlayMouse); }
-            catch (Exception ex) { log.debug("Mouse listener unregister failed", ex); }
-            finally { overlayMouse = null; }
+            try {
+                mouseManager.unregisterMouseListener(overlayMouse);
+            } catch (Exception ex) {
+                log.debug("Mouse listener unregister failed", ex);
+            } finally {
+                overlayMouse = null;
+            }
         }
 
         if (navButton != null) {
-            try { clientToolbar.removeNavigation(navButton); }
-            catch (Exception ex) { log.debug("Nav button removal failed", ex); }
-            finally { navButton = null; }
+            try {
+                clientToolbar.removeNavigation(navButton);
+            } catch (Exception ex) {
+                log.debug("Nav button removal failed", ex);
+            } finally {
+                navButton = null;
+            }
         }
         choiceManPanel = null;
 
@@ -227,28 +274,31 @@ public class ChoiceManPlugin extends Plugin
         baselineReady = false;
     }
 
-    /** Toggle features when hopping between normal and special worlds. */
+    /**
+     * Toggle features when hopping between normal and special worlds.
+     */
     @Subscribe
-    public void onWorldChanged(WorldChanged event)
-    {
+    public void onWorldChanged(WorldChanged event) {
         if (isNormalWorld()) enableFeatures();
         else disableFeatures();
     }
 
-    /** Reset baseline at login to avoid double-awarding on reconnect. */
+    /**
+     * Reset baseline at login to avoid double-awarding on reconnect.
+     */
     @Subscribe
-    public void onGameStateChanged(GameStateChanged event)
-    {
+    public void onGameStateChanged(GameStateChanged event) {
         if (!featuresActive) return;
         if (event.getGameState() == GameState.LOGGED_IN || event.getGameState() == GameState.LOGGING_IN) {
             baselineReady = false;
         }
     }
 
-    /** Award a pending choice per net increase in total level since the last tick. */
+    /**
+     * Award a pending choice per net increase in total level since the last tick.
+     */
     @Subscribe
-    public void onGameTick(GameTick tick)
-    {
+    public void onGameTick(GameTick tick) {
         if (!featuresActive || client.getGameState() != GameState.LOGGED_IN) return;
 
         final int current = computeTotalLevel();
@@ -266,10 +316,11 @@ public class ChoiceManPlugin extends Plugin
         }
     }
 
-    /** React to live config changes only (dim/opacity/SFX/GE). */
+    /**
+     * React to live config changes only (dim/opacity/SFX/GE).
+     */
     @Subscribe
-    public void onConfigChanged(net.runelite.client.events.ConfigChanged event)
-    {
+    public void onConfigChanged(net.runelite.client.events.ConfigChanged event) {
         if (!featuresActive || !"choiceman".equals(event.getGroup())) return;
 
         switch (event.getKey()) {
@@ -280,8 +331,11 @@ public class ChoiceManPlugin extends Plugin
                 break;
 
             case "sfxVolume":
-                try { choiceManOverlay.setSfxVolumePercent(config.sfxVolume()); }
-                catch (Exception ex) { log.debug("Failed to apply SFX volume", ex); }
+                try {
+                    choiceManOverlay.setSfxVolumePercent(config.sfxVolume());
+                } catch (Exception ex) {
+                    log.debug("Failed to apply SFX volume", ex);
+                }
                 break;
 
             default:
@@ -289,13 +343,16 @@ public class ChoiceManPlugin extends Plugin
         }
     }
 
-    /** Intentionally unused; awarding is handled on GameTick to avoid double counting. */
+    /**
+     * Intentionally unused; awarding is handled on GameTick to avoid double counting.
+     */
     @Subscribe
     public void onStatChanged(StatChanged event) { /* no-op */ }
 
-    /** Start a presentation if we have pending choices and the overlay is idle. */
-    private void startChoiceIfNeeded()
-    {
+    /**
+     * Start a presentation if we have pending choices and the overlay is idle.
+     */
+    private void startChoiceIfNeeded() {
         if (pendingChoices.get() <= 0 || choiceManOverlay.isActive()) return;
 
         List<String> pool = itemsRepo.getAllBasesStillLocked(unlocks);
@@ -310,10 +367,11 @@ public class ChoiceManPlugin extends Plugin
         choiceManOverlay.presentChoicesSequential(offer);
     }
 
-    /** Mark bases as obtained the first time they appear in inventory; update panel counts. */
+    /**
+     * Mark bases as obtained the first time they appear in inventory; update panel counts.
+     */
     @Subscribe
-    public void onItemContainerChanged(ItemContainerChanged event)
-    {
+    public void onItemContainerChanged(ItemContainerChanged event) {
         if (!featuresActive) return;
         if (event.getItemContainer() != null && event.getContainerId() == InventoryID.INV) {
             for (net.runelite.api.Item item : event.getItemContainer().getItems()) {
@@ -327,18 +385,18 @@ public class ChoiceManPlugin extends Plugin
         }
     }
 
-    /** After GE search list is built, hide entries that are locked or never obtained. */
+    /**
+     * After GE search list is built, hide entries that are locked or never obtained.
+     */
     @Subscribe
-    public void onScriptPostFired(ScriptPostFired event)
-    {
+    public void onScriptPostFired(ScriptPostFired event) {
         if (!featuresActive || !config.geRestrictions()) return;
         if (event.getScriptId() == GE_SEARCH_BUILD_SCRIPT) {
             filterGeResults();
         }
     }
 
-    private void filterGeResults()
-    {
+    private void filterGeResults() {
         final Widget results = client.getWidget(GE_GROUP_ID, GE_RESULTS_CHILD);
         if (results == null) return;
 
@@ -363,16 +421,18 @@ public class ChoiceManPlugin extends Plugin
         }
     }
 
-    /** @return whether an item is tracked by Choice Man (present in items.json). */
-    public boolean isInPlay(int itemId)
-    {
+    /**
+     * @return whether an item is tracked by Choice Man (present in items.json).
+     */
+    public boolean isInPlay(int itemId) {
         int canon = itemManager.canonicalize(itemId);
         return itemsRepo.getBaseForId(canon) != null;
     }
 
-    /** Normal worlds exclude PvP/beta/tournament/speedrunning variants. */
-    public boolean isNormalWorld()
-    {
+    /**
+     * Normal worlds exclude PvP/beta/tournament/speedrunning variants.
+     */
+    public boolean isNormalWorld() {
         EnumSet<WorldType> worldTypes = client.getWorldType();
         return !(worldTypes.contains(WorldType.DEADMAN)
                 || worldTypes.contains(WorldType.SEASONAL)
@@ -382,9 +442,10 @@ public class ChoiceManPlugin extends Plugin
                 || worldTypes.contains(WorldType.TOURNAMENT_WORLD));
     }
 
-    /** Compute total level from real levels only (test overrides removed). */
-    private int computeTotalLevel()
-    {
+    /**
+     * Compute total level from real levels only (test overrides removed).
+     */
+    private int computeTotalLevel() {
         int sum = 0;
         for (Skill s : TRACKED_SKILLS) {
             sum += client.getRealSkillLevel(s);

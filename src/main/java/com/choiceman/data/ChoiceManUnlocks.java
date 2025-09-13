@@ -2,7 +2,6 @@ package com.choiceman.data;
 
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
-import net.runelite.client.game.ItemManager;
 
 import javax.inject.Singleton;
 import java.io.BufferedWriter;
@@ -37,7 +36,7 @@ public class ChoiceManUnlocks {
     /**
      * Wire runtime services used for JSON I/O and base validation.
      */
-    public void init(Gson gson, ItemsRepository repo, ItemManager itemManager) {
+    public void init(Gson gson, ItemsRepository repo) {
         this.gson = gson;
         this.repo = repo;
     }
