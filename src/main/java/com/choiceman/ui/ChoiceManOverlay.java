@@ -31,21 +31,12 @@ import java.util.List;
 import java.util.concurrent.ThreadLocalRandom;
 
 /**
- * Choice Man pick overlay.
- *
- * <p>Threading model:
- * <ul>
- *   <li>{@link #render(Graphics2D)} runs on the client thread; it reads immutable/volatile state only.</li>
- *   <li>Mouse events come from the Swing EDT; we keep cross-thread fields {@code volatile} and protect
- *       mutable shared collections with a narrow lock ({@code boundsLock}) per Swing threading guidance. :contentReference[oaicite:0]{index=0}</li>
- *   <li>Audio mixing uses small {@link Clip} pools; gain is set via MASTER_GAIN in dB using 20·log10(linear). :contentReference[oaicite:1]{index=1}</li>
- * </ul>
- *
- * <p>Overlay placement uses RuneLite’s overlay API with TOP_CENTER and ABOVE_WIDGETS. :contentReference[oaicite:2]{index=2}
+ * Choice Man pick overlay. Renders selectable “cards” for a set of base names
+ * and plays reveal/selection animations. Can be minimized into a pill
+ * that shows how many pending choices are queued.
  */
 @Singleton
 public class ChoiceManOverlay extends Overlay {
-    // Layout/animation constants
     private static final int ROOT_Y = 32;
     private static final int TITLE_GAP_Y = 8;
     private static final int CARD_W = 140;
@@ -68,39 +59,64 @@ public class ChoiceManOverlay extends Overlay {
     private static final int SEL_HOLD_MS = 220;
     private static final int SEL_FADE_MS = 520;
     private static final int ANIM_TOTAL = EXPLODE_MS + SEL_MOVE_MS + SEL_HOLD_MS + SEL_FADE_MS;
+
     private final Client client;
-    // Bounds shared across render & mouse threads
+
     private final List<Rectangle> cardBounds = new ArrayList<>();
     private final Object boundsLock = new Object();
-    // Explosion particles per non-selected card
+
     private final Map<Integer, List<Particle>> particles = new HashMap<>();
     private final Set<Integer> popupPlayed = Collections.synchronizedSet(new HashSet<>());
+
     private ItemManager itemManager;
     private ItemsRepository repo;
     private ChoiceManUnlocks unlocks;
-    private BufferedImage cardBg;
+
+    /**
+     * Default presentation background.
+     */
+    private BufferedImage cardBgDefault;
+    /**
+     * Gold presentation background (milestones 200/500/1000).
+     */
+    private BufferedImage cardBgGold;
+    /**
+     * Which background to use for the *current* presentation.
+     */
+    private volatile boolean useGoldBgThisPresentation = false;
+
     @Setter
     private ChoiceManConfig config;
     @Setter
     private java.util.function.Consumer<String> onPick;
+
     @Getter
     private volatile boolean active = false;
     private volatile List<String> choices;
     private volatile Instant presentedAt;
+
     private volatile int hoveredIndex = -1;
     private int lastHoverIndex = -1;
+
     private volatile boolean minimized = false;
+    private volatile int pendingCount = 0;
+
     private Rectangle minimizeBounds = null;
     private Rectangle restoreBounds = null;
     private volatile boolean hoverMinimize = false;
     private volatile boolean hoverRestore = false;
-    // Selection animation
+
     private volatile boolean animating = false;
     private volatile int selectedIndex = -1;
     private volatile Instant animStart = null;
     private volatile boolean pickSent = false;
     private volatile boolean particlesSeeded = false;
-    // SFX
+
+    /**
+     * Updated every render; true only when a card has fully finished revealing.
+     */
+    private volatile boolean[] fullyRevealed = new boolean[0];
+
     private Sfx sfxHover;
     private Sfx sfxPopup;
     private Sfx sfxSelect;
@@ -124,6 +140,9 @@ public class ChoiceManOverlay extends Overlay {
                 hoverMinimize = false;
             } else {
                 int newHover = indexAt(lp);
+                if (!isCardFullyRevealed(newHover)) {
+                    newHover = -1;
+                }
                 if (newHover != hoveredIndex) {
                     hoveredIndex = newHover;
                 }
@@ -140,6 +159,12 @@ public class ChoiceManOverlay extends Overlay {
         @Override
         public MouseEvent mousePressed(MouseEvent e) {
             if (!active || choices == null || choices.isEmpty()) return e;
+
+            // Only allow left button to select; ignore middle/right.
+            if (e.getButton() != MouseEvent.BUTTON1) {
+                return e;
+            }
+
             Point lp = toOverlayLocal(e);
             if (lp == null) return e;
             if (animating) return e;
@@ -160,6 +185,10 @@ public class ChoiceManOverlay extends Overlay {
             if (minimized) return e;
 
             int idx = indexAt(lp);
+            if (!isCardFullyRevealed(idx)) {
+                return e; // guard: do not allow selecting until fully revealed
+            }
+
             if (idx >= 0 && idx < (choices != null ? choices.size() : 0)) {
                 if (sfxSelect != null) sfxSelect.play();
 
@@ -176,7 +205,7 @@ public class ChoiceManOverlay extends Overlay {
             return e;
         }
     };
-    private float sfxVolumeLinear = 1f; // 0.0 .. 1.0
+    private float sfxVolumeLinear = 1f;
 
     @Inject
     public ChoiceManOverlay(Client client) {
@@ -204,7 +233,6 @@ public class ChoiceManOverlay extends Overlay {
             out.add(text == null ? "" : text);
             return out;
         }
-
         String[] words = text.split("\\s+");
         StringBuilder line = new StringBuilder();
 
@@ -214,16 +242,12 @@ public class ChoiceManOverlay extends Overlay {
                 line.setLength(0);
                 line.append(next);
             } else {
-                if (line.length() == 0) {
-                    out.add(hardBreak(words[i], fm, maxWidth));
-                } else {
+                if (line.length() == 0) out.add(hardBreak(words[i], fm, maxWidth));
+                else {
                     out.add(line.toString());
-                    if (fm.stringWidth(words[i]) > maxWidth)
-                        out.add(hardBreak(words[i], fm, maxWidth));
-                    else
-                        line = new StringBuilder(words[i]);
+                    if (fm.stringWidth(words[i]) > maxWidth) out.add(hardBreak(words[i], fm, maxWidth));
+                    else line = new StringBuilder(words[i]);
                 }
-
                 if (out.size() == maxLines) {
                     String last = out.get(out.size() - 1);
                     out.set(out.size() - 1, ellipsize(last + (line.length() == 0 ? "" : " " + line), fm, maxWidth));
@@ -239,7 +263,6 @@ public class ChoiceManOverlay extends Overlay {
                 out.set(out.size() - 1, ellipsize(last + " " + line, fm, maxWidth));
             }
         }
-
         return out;
     }
 
@@ -267,8 +290,6 @@ public class ChoiceManOverlay extends Overlay {
         return str + ell;
     }
 
-    // drawing helpers
-
     private static double cubicOut(double t) {
         double f = t - 1.0;
         return f * f * f + 1.0;
@@ -286,31 +307,28 @@ public class ChoiceManOverlay extends Overlay {
         return (a + (b - a) * t);
     }
 
-    // mouse handling (EDT)
-
     private static float lerp(int a, int b, float t) {
         return a + (b - a) * t;
     }
 
-    // small utilities
-
-    /**
-     * Exposes the overlay's mouse adapter for registration with RuneLite's {@code MouseManager}.
-     */
     public MouseListener getMouseAdapter() {
         return mouse;
     }
 
+    public void setPendingCount(int count) {
+        pendingCount = Math.max(0, count);
+    }
+
     /**
-     * Injects assets and services required by the overlay
+     * Load both default and gold backgrounds.
      */
-    public void setAssets(String bgPath, ItemManager itemManager, ItemsRepository repo, ChoiceManUnlocks unlocks) {
-        this.cardBg = ImageUtil.loadImageResource(getClass(), bgPath);
+    public void setAssets(String bgPathDefault, String bgPathGold, ItemManager itemManager, ItemsRepository repo, ChoiceManUnlocks unlocks) {
+        this.cardBgDefault = ImageUtil.loadImageResource(getClass(), bgPathDefault);
+        this.cardBgGold = ImageUtil.loadImageResource(getClass(), bgPathGold);
         this.itemManager = itemManager;
         this.repo = repo;
         this.unlocks = unlocks;
 
-        // Load sound pools
         try {
             sfxHover = Sfx.load("/com/choiceman/sounds/CardMouseover.wav", 4);
         } catch (Exception ignored) {
@@ -324,13 +342,16 @@ public class ChoiceManOverlay extends Overlay {
         } catch (Exception ignored) {
         }
 
-        // Apply volume from current config, if any
         if (config != null) setSfxVolumePercent(config.sfxVolume());
     }
 
     /**
-     * Updates all SFX pools to the given linear percent (0–100).
+     * Backwards-compatible helper if only one path was provided.
      */
+    public void setAssets(String bgPathDefault, ItemManager itemManager, ItemsRepository repo, ChoiceManUnlocks unlocks) {
+        setAssets(bgPathDefault, bgPathDefault, itemManager, repo, unlocks);
+    }
+
     public void setSfxVolumePercent(int percent) {
         final float v = clamp01(percent / 100f);
         sfxVolumeLinear = v;
@@ -340,10 +361,17 @@ public class ChoiceManOverlay extends Overlay {
     }
 
     /**
-     * Presents the given base names and starts the staggered reveal animation.
-     * Call from the client thread.
+     * Present with default (non-milestone) background.
      */
     public void presentChoicesSequential(List<String> bases) {
+        presentChoicesSequential(bases, false);
+    }
+
+    /**
+     * Present with explicit milestone background selection.
+     */
+    public void presentChoicesSequential(List<String> bases, boolean milestone) {
+        this.useGoldBgThisPresentation = milestone;
         this.choices = bases;
         this.presentedAt = Instant.now();
         this.active = true;
@@ -368,12 +396,11 @@ public class ChoiceManOverlay extends Overlay {
             cardBounds.clear();
         }
 
+        fullyRevealed = new boolean[bases.size()];
+
         setSfxVolumePercent(config != null ? config.sfxVolume() : 100);
     }
 
-    /**
-     * Dismisses the overlay immediately and clears transient animation state.
-     */
     public void dismiss() {
         active = false;
         choices = null;
@@ -397,6 +424,9 @@ public class ChoiceManOverlay extends Overlay {
         synchronized (boundsLock) {
             cardBounds.clear();
         }
+
+        fullyRevealed = new boolean[0];
+        useGoldBgThisPresentation = false; // reset for next time
     }
 
     @Override
@@ -416,7 +446,7 @@ public class ChoiceManOverlay extends Overlay {
         if (availH <= 0) availH = 503;
 
         if (minimized) {
-            return renderRestorePill(g, availW, local.size());
+            return renderRestorePill(g, availW);
         }
 
         g.setFont(g.getFont().deriveFont(Font.BOLD, 16f));
@@ -434,6 +464,7 @@ public class ChoiceManOverlay extends Overlay {
         int cols = Math.max(1, Math.min(maxCols, local.size()));
         int rows = (local.size() + cols - 1) / cols;
 
+        boolean[] revealSnapshot = new boolean[local.size()];
         List<Rectangle> newBounds = new ArrayList<>(local.size());
         for (int i = 0; i < local.size(); i++) {
             int row = i / cols;
@@ -452,6 +483,9 @@ public class ChoiceManOverlay extends Overlay {
 
             long delay = (long) (i * revealMs * 0.6);
             float tReveal = clamp01((ms - delay) / (float) revealMs);
+            boolean fully = tReveal >= 1.0f;
+            revealSnapshot[i] = fully;
+
             if (tReveal <= 0f) {
                 newBounds.add(null);
                 continue;
@@ -469,6 +503,8 @@ public class ChoiceManOverlay extends Overlay {
             newBounds.add(card);
         }
 
+        fullyRevealed = revealSnapshot;
+
         synchronized (boundsLock) {
             cardBounds.clear();
             cardBounds.addAll(newBounds);
@@ -482,7 +518,6 @@ public class ChoiceManOverlay extends Overlay {
         long animElapsed = animating ? Duration.between(animStart, Instant.now()).toMillis() : 0;
         float explodeT = animating ? clamp01(animElapsed / (float) EXPLODE_MS) : 0f;
 
-        // Pass 1: non-selected
         for (int i = 0; i < local.size(); i++) {
             if (i == selectedIndex) continue;
             Rectangle card = newBounds.get(i);
@@ -500,7 +535,6 @@ public class ChoiceManOverlay extends Overlay {
                 continue;
             }
 
-            // explode/fade
             float e = explodeT;
             float scale = 1.0f - 0.4f * e;
             float alpha = 1.0f - e;
@@ -513,7 +547,6 @@ public class ChoiceManOverlay extends Overlay {
             if (ps != null) drawParticles(g, ps, e);
         }
 
-        // Pass 2: selected on top
         if (selectedIndex >= 0 && selectedIndex < local.size()) {
             Rectangle startCard = (selectedIndex < newBounds.size()) ? newBounds.get(selectedIndex) : null;
             if (startCard != null) {
@@ -527,7 +560,6 @@ public class ChoiceManOverlay extends Overlay {
 
                 long afterExplode = Math.max(0, animElapsed - EXPLODE_MS);
                 float moveT = clamp01(afterExplode / (float) SEL_MOVE_MS);
-                float holdT = clamp01((afterExplode - SEL_MOVE_MS) / (float) SEL_HOLD_MS); // kept for timing parity
                 float fadeT = clamp01((afterExplode - SEL_MOVE_MS - SEL_HOLD_MS) / (float) SEL_FADE_MS);
 
                 float easeMove = (float) cubicOut(moveT);
@@ -568,6 +600,81 @@ public class ChoiceManOverlay extends Overlay {
         return new Dimension(totalW, totalH);
     }
 
+    private boolean isCardFullyRevealed(int idx) {
+        boolean[] arr = fullyRevealed;
+        return idx >= 0 && arr != null && idx < arr.length && arr[idx];
+    }
+
+    private int indexAt(Point localPoint) {
+        List<Rectangle> snapshot;
+        synchronized (boundsLock) {
+            if (cardBounds.isEmpty()) return -1;
+            snapshot = new ArrayList<>(cardBounds);
+        }
+        for (int i = 0; i < snapshot.size(); i++) {
+            Rectangle r = snapshot.get(i);
+            if (r != null && r.contains(localPoint)) return i;
+        }
+        return -1;
+    }
+
+    private Dimension renderRestorePill(Graphics2D g, int viewportW) {
+        final int w = RESTORE_W;
+        final int h = RESTORE_H;
+        final int x = Math.max(8, (viewportW - w) / 2);
+        final int y = ROOT_Y;
+
+        restoreBounds = new Rectangle(x, y, w, h);
+
+        g.setColor(new Color(26, 26, 26, 232));
+        g.fillRoundRect(x, y, w, h, 12, 12);
+
+        Color acc = getAccent();
+        if (hoverRestore) {
+            acc = new Color(acc.getRed(), acc.getGreen(), acc.getBlue(),
+                    Math.min(255, (int) (acc.getAlpha() * 1.1)));
+        }
+        Stroke s = g.getStroke();
+        g.setStroke(new BasicStroke(2.0f));
+        g.setColor(acc);
+        g.drawRoundRect(x, y, w, h, 12, 12);
+        g.setStroke(s);
+
+        g.setFont(g.getFont().deriveFont(Font.BOLD, 13f));
+        g.setColor(Color.WHITE);
+        final int count = Math.max(0, pendingCount);
+        String label = (count > 0) ? ("Show choices (" + count + ")") : "Show choices";
+        drawCentered(g, label, x, y + ((h - g.getFontMetrics().getHeight()) / 2) + g.getFontMetrics().getAscent(), w);
+
+        return new Dimension(viewportW, h + ROOT_Y + 8);
+    }
+
+    private void renderMinimizePill(Graphics2D g, Rectangle r, String label, boolean hovered) {
+        g.setColor(new Color(26, 26, 26, 220));
+        g.fillRoundRect(r.x, r.y, r.width, r.height, 10, 10);
+
+        Color acc = getAccent();
+        if (hovered) {
+            acc = new Color(acc.getRed(), acc.getGreen(), acc.getBlue(),
+                    Math.min(255, (int) (acc.getAlpha() * 1.1)));
+        }
+        Stroke s = g.getStroke();
+        g.setStroke(new BasicStroke(1.8f));
+        g.setColor(acc);
+        g.drawRoundRect(r.x, r.y, r.width, r.height, 10, 10);
+        g.setStroke(s);
+
+        g.setFont(g.getFont().deriveFont(Font.BOLD, 12f));
+        g.setColor(Color.WHITE);
+        drawCentered(g, label, r.x, r.y + ((r.height - g.getFontMetrics().getHeight()) / 2) + g.getFontMetrics().getAscent(), r.width);
+    }
+
+    private Color getAccent() {
+        return (config != null && config.accentColor() != null)
+                ? config.accentColor()
+                : new Color(255, 204, 0, 255);
+    }
+
     private void drawCard(Graphics2D g, Rectangle card, String base, boolean hovered,
                           float alpha, float scale, float glow, boolean emphasize) {
         if (card == null) return;
@@ -584,11 +691,11 @@ public class ChoiceManOverlay extends Overlay {
 
         g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, clamp01(alpha)));
 
-        // background
-        if (cardBg != null) {
+        final BufferedImage bg = useGoldBgThisPresentation && cardBgGold != null ? cardBgGold : cardBgDefault;
+        if (bg != null) {
             g.setColor(new Color(0, 0, 0, Math.min(180, (int) (120 * alpha))));
             g.fillRoundRect(2, 4, card.width, card.height, 16, 16);
-            g.drawImage(cardBg, 0, 0, card.width, card.height, null);
+            g.drawImage(bg, 0, 0, card.width, card.height, null);
         } else {
             g.setColor(new Color(26, 26, 26, Math.min(255, (int) (232 * alpha))));
             g.fillRoundRect(0, 0, card.width, card.height, 14, 14);
@@ -596,7 +703,6 @@ public class ChoiceManOverlay extends Overlay {
             g.drawRoundRect(0, 0, card.width, card.height, 14, 14);
         }
 
-        // accent ring
         if (hovered || emphasize) {
             Stroke s = g.getStroke();
             g.setStroke(new BasicStroke(1.6f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
@@ -607,7 +713,6 @@ public class ChoiceManOverlay extends Overlay {
             g.setStroke(s);
         }
 
-        // icon + text
         Font nameFont = g.getFont().deriveFont(Font.PLAIN, NAME_FONT_SIZE);
         FontMetrics nfm = g.getFontMetrics(nameFont);
 
@@ -728,77 +833,6 @@ public class ChoiceManOverlay extends Overlay {
         g.setComposite(old);
     }
 
-    private int indexAt(Point localPoint) {
-        List<Rectangle> snapshot;
-        synchronized (boundsLock) {
-            if (cardBounds.isEmpty()) return -1;
-            snapshot = new ArrayList<>(cardBounds);
-        }
-        for (int i = 0; i < snapshot.size(); i++) {
-            Rectangle r = snapshot.get(i);
-            if (r != null && r.contains(localPoint)) return i;
-        }
-        return -1;
-    }
-
-    private Dimension renderRestorePill(Graphics2D g, int viewportW, int count) {
-        final int w = RESTORE_W;
-        final int h = RESTORE_H;
-        final int x = Math.max(8, (viewportW - w) / 2);
-        final int y = ROOT_Y;
-
-        restoreBounds = new Rectangle(x, y, w, h);
-
-        g.setColor(new Color(26, 26, 26, 232));
-        g.fillRoundRect(x, y, w, h, 12, 12);
-
-        Color acc = getAccent();
-        if (hoverRestore) {
-            acc = new Color(acc.getRed(), acc.getGreen(), acc.getBlue(),
-                    Math.min(255, (int) (acc.getAlpha() * 1.1)));
-        }
-        Stroke s = g.getStroke();
-        g.setStroke(new BasicStroke(2.0f));
-        g.setColor(acc);
-        g.drawRoundRect(x, y, w, h, 12, 12);
-        g.setStroke(s);
-
-        g.setFont(g.getFont().deriveFont(Font.BOLD, 13f));
-        g.setColor(Color.WHITE);
-        String label = (count > 0) ? ("Show choices (" + count + ")") : "Show choices";
-        drawCentered(g, label, x, y + ((h - g.getFontMetrics().getHeight()) / 2) + g.getFontMetrics().getAscent(), w);
-
-        return new Dimension(viewportW, h + ROOT_Y + 8);
-    }
-
-    private void renderMinimizePill(Graphics2D g, Rectangle r, String label, boolean hovered) {
-        g.setColor(new Color(26, 26, 26, 220));
-        g.fillRoundRect(r.x, r.y, r.width, r.height, 10, 10);
-
-        Color acc = getAccent();
-        if (hovered) {
-            acc = new Color(acc.getRed(), acc.getGreen(), acc.getBlue(),
-                    Math.min(255, (int) (acc.getAlpha() * 1.1)));
-        }
-        Stroke s = g.getStroke();
-        g.setStroke(new BasicStroke(1.8f));
-        g.setColor(acc);
-        g.drawRoundRect(r.x, r.y, r.width, r.height, 10, 10);
-        g.setStroke(s);
-
-        g.setFont(g.getFont().deriveFont(Font.BOLD, 12f));
-        g.setColor(Color.WHITE);
-        drawCentered(g, label, r.x, r.y + ((r.height - g.getFontMetrics().getHeight()) / 2) + g.getFontMetrics().getAscent(), r.width);
-    }
-
-    private Color getAccent() {
-        return (config != null && config.accentColor() != null)
-                ? config.accentColor()
-                : new Color(255, 204, 0, 255);
-    }
-
-    // value types
-
     private static final class Particle {
         final float x0, y0;
         final float vx, vy;
@@ -815,14 +849,11 @@ public class ChoiceManOverlay extends Overlay {
         }
     }
 
-    /**
-     * Small Clip pool so multiple sounds can overlap reliably.
-     */
     private static final class Sfx {
         private final List<Clip> pool = new ArrayList<>();
         private final byte[] wavBytes;
         private final int maxPool;
-        private volatile float volumeLinear = 1f; // 0..1
+        private volatile float volumeLinear = 1f;
 
         private Sfx(byte[] wavBytes, int maxPool) {
             this.wavBytes = wavBytes;
@@ -876,22 +907,18 @@ public class ChoiceManOverlay extends Overlay {
         private void applyVolume(Clip c) {
             try {
                 FloatControl gain = (FloatControl) c.getControl(FloatControl.Type.MASTER_GAIN);
-                // 0..1 linear -> dB
                 float db = (volumeLinear <= 0f) ? gain.getMinimum()
                         : (float) (20.0 * Math.log10(volumeLinear));
                 db = Math.max(gain.getMinimum(), Math.min(gain.getMaximum(), db));
                 gain.setValue(db);
                 return;
             } catch (IllegalArgumentException ignored) {
-                // Fallback to VOLUME (0..1) if MASTER_GAIN not present
             }
-
             try {
                 FloatControl vol = (FloatControl) c.getControl(FloatControl.Type.VOLUME);
                 float v = Math.max(vol.getMinimum(), Math.min(vol.getMaximum(), volumeLinear));
                 vol.setValue(v);
             } catch (IllegalArgumentException ignored) {
-                // No controllable volume; ignore
             }
         }
 

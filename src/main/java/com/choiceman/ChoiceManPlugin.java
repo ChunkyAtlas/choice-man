@@ -9,10 +9,7 @@ import com.google.gson.Gson;
 import com.google.inject.Provides;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
-import net.runelite.api.Client;
-import net.runelite.api.GameState;
-import net.runelite.api.Skill;
-import net.runelite.api.WorldType;
+import net.runelite.api.*;
 import net.runelite.api.events.*;
 import net.runelite.api.gameval.InventoryID;
 import net.runelite.api.widgets.Widget;
@@ -40,6 +37,10 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
+/**
+ * Main plugin. Tracks level-ups, presents unlock choices, dims/blocks locked items,
+ * and integrates with the Music tab. Uses RuneLite's injected Gson for persistence.
+ */
 @PluginDescriptor(
         name = "Choice Man",
         description = "Every total-level increase presents items to unlock; dims/blocks locked items & spells; GE/shop restrictions.",
@@ -47,18 +48,22 @@ import java.util.stream.Collectors;
 )
 @Slf4j
 public class ChoiceManPlugin extends Plugin {
-    // GE script/ids used to prune results
     private static final int GE_SEARCH_BUILD_SCRIPT = 751;
     private static final int GE_GROUP_ID = 162;
     private static final int GE_RESULTS_CHILD = 51;
 
-    // Cache non-overall skills to avoid per-tick allocations
     private static final Skill[] TRACKED_SKILLS = java.util.Arrays.stream(Skill.values())
             .filter(s -> s != Skill.OVERALL)
             .toArray(Skill[]::new);
 
-    // Pending choice presentations across callbacks
+    /**
+     * Queue of pending presentations across callbacks.
+     */
     private final AtomicInteger pendingChoices = new AtomicInteger(0);
+    /**
+     * How many of the pending presentations are milestone (200/500/1000) and should use gold BG.
+     */
+    private final AtomicInteger pendingMilestoneChoices = new AtomicInteger(0);
 
     @Inject
     private Client client;
@@ -76,7 +81,7 @@ public class ChoiceManPlugin extends Plugin {
     @Inject
     private ItemManager itemManager;
     @Inject
-    private Gson gson; // RuneLite's Gson (injected)
+    private Gson gson; // RuneLite's Gson
     @Inject
     private ChoiceManConfig config;
     @Inject
@@ -119,6 +124,16 @@ public class ChoiceManPlugin extends Plugin {
         return 2;
     }
 
+    /**
+     * Next threshold where choice-count increases.
+     */
+    private static int nextThreshold(int total) {
+        if (total < 200) return 200;
+        if (total < 500) return 500;
+        if (total < 1000) return 1000;
+        return -1;
+    }
+
     @Provides
     ChoiceManConfig provideConfig(ConfigManager configManager) {
         return configManager.getConfig(ChoiceManConfig.class);
@@ -152,24 +167,38 @@ public class ChoiceManPlugin extends Plugin {
         unlocks.loadFromDisk();
 
         pendingChoices.set(0);
+        pendingMilestoneChoices.set(0);
         lastKnownTotal = -1;
         baselineReady = false;
 
-        choiceManOverlay.setAssets("/com/choiceman/ui/panel_bg.png", itemManager, itemsRepo, unlocks);
+        // Load both backgrounds: default and gold
+        choiceManOverlay.setAssets(
+                "/com/choiceman/ui/panel_bg.png",
+                "/com/choiceman/ui/panel_bg_gold.png",
+                itemManager, itemsRepo, unlocks
+        );
         choiceManOverlay.setConfig(config);
         try {
             choiceManOverlay.setSfxVolumePercent(config.sfxVolume());
         } catch (Exception ex) {
             log.debug("Failed to set initial SFX volume", ex);
         }
+        choiceManOverlay.setPendingCount(0);
 
         choiceManOverlay.setOnPick(baseName -> {
             unlocks.unlockBase(baseName, itemsRepo.getIdsForBase(baseName));
             unlocks.saveToDisk();
+
+            // Live-refresh UI that depends on unlock state
+            clientThread.invokeLater(() -> unlocksWidgetController.refreshIfActive());
             if (choiceManPanel != null) {
                 SwingUtilities.invokeLater(() -> choiceManPanel.refresh(unlocks));
             }
-            if (pendingChoices.decrementAndGet() > 0) {
+
+            // Advance the queue
+            int remaining = pendingChoices.decrementAndGet();
+            choiceManOverlay.setPendingCount(Math.max(0, remaining));
+            if (remaining > 0) {
                 clientThread.invoke(this::startChoiceIfNeeded);
             }
         });
@@ -214,7 +243,6 @@ public class ChoiceManPlugin extends Plugin {
         } catch (Exception ex) {
             log.debug("Restore unlocks view failed", ex);
         }
-
         try {
             actionHandler.shutDown();
         } catch (Exception ex) {
@@ -270,6 +298,8 @@ public class ChoiceManPlugin extends Plugin {
         choiceManPanel = null;
 
         pendingChoices.set(0);
+        pendingMilestoneChoices.set(0);
+        choiceManOverlay.setPendingCount(0);
         lastKnownTotal = -1;
         baselineReady = false;
     }
@@ -296,6 +326,8 @@ public class ChoiceManPlugin extends Plugin {
 
     /**
      * Award a pending choice per net increase in total level since the last tick.
+     * Queue milestone presentations when crossing 200/500/1000.
+     * Also announce how many more levels until the next choice-count threshold.
      */
     @Subscribe
     public void onGameTick(GameTick tick) {
@@ -305,19 +337,37 @@ public class ChoiceManPlugin extends Plugin {
         if (!baselineReady) {
             lastKnownTotal = current;
             baselineReady = true;
+            announceThresholdHint(current); // initial hint after login
             return;
         }
 
         if (current > lastKnownTotal) {
             int delta = current - lastKnownTotal;
-            pendingChoices.addAndGet(delta);
+
+            // Count milestone crossings (each one deserves a gold presentation)
+            int crossedMilestones = 0;
+            if (lastKnownTotal < 200 && current >= 200) crossedMilestones++;
+            if (lastKnownTotal < 500 && current >= 500) crossedMilestones++;
+            if (lastKnownTotal < 1000 && current >= 1000) crossedMilestones++;
+            if (crossedMilestones > 0) {
+                pendingMilestoneChoices.addAndGet(crossedMilestones);
+            }
+
+            int totalQueued = pendingChoices.addAndGet(delta);
             lastKnownTotal = current;
+
+            // Update minimized pill with true queue count
+            choiceManOverlay.setPendingCount(Math.max(0, totalQueued));
+
+            // Chat hint about the next threshold
+            announceThresholdHint(current);
+
             startChoiceIfNeeded();
         }
     }
 
     /**
-     * React to live config changes only (dim/opacity/SFX/GE).
+     * React to live config changes (dim/opacity/SFX/GE).
      */
     @Subscribe
     public void onConfigChanged(net.runelite.client.events.ConfigChanged event) {
@@ -351,24 +401,37 @@ public class ChoiceManPlugin extends Plugin {
 
     /**
      * Start a presentation if we have pending choices and the overlay is idle.
+     * Pulls one milestone flag from the queue if available.
      */
     private void startChoiceIfNeeded() {
-        if (pendingChoices.get() <= 0 || choiceManOverlay.isActive()) return;
+        if (pendingChoices.get() <= 0) return;
+        if (choiceManOverlay.isActive()) return; // already visible (minimized state shows count)
 
         List<String> pool = itemsRepo.getAllBasesStillLocked(unlocks);
         if (pool.isEmpty()) {
             pendingChoices.set(0);
+            pendingMilestoneChoices.set(0);
+            choiceManOverlay.setPendingCount(0);
             return;
         }
 
         int offerCount = choiceCountForTotal(computeTotalLevel());
         Collections.shuffle(pool, ThreadLocalRandom.current());
         List<String> offer = pool.stream().limit(Math.min(offerCount, pool.size())).collect(Collectors.toList());
-        choiceManOverlay.presentChoicesSequential(offer);
+
+        boolean milestone = false;
+        int m = pendingMilestoneChoices.get();
+        if (m > 0) {
+            // consume one milestone flag for this presentation
+            pendingMilestoneChoices.decrementAndGet();
+            milestone = true;
+        }
+
+        choiceManOverlay.presentChoicesSequential(offer, milestone);
     }
 
     /**
-     * Mark bases as obtained the first time they appear in inventory; update panel counts.
+     * Mark bases as obtained the first time they appear in inventory; update dependent UI.
      */
     @Subscribe
     public void onItemContainerChanged(ItemContainerChanged event) {
@@ -378,8 +441,11 @@ public class ChoiceManPlugin extends Plugin {
                 if (item == null) continue;
                 int canon = itemManager.canonicalize(item.getId());
                 String base = itemsRepo.getBaseForId(canon);
-                if (base != null && unlocks.markObtainedBaseIfFirst(base) && choiceManPanel != null) {
-                    SwingUtilities.invokeLater(() -> choiceManPanel.refresh(unlocks));
+                if (base != null && unlocks.markObtainedBaseIfFirst(base)) {
+                    clientThread.invokeLater(() -> unlocksWidgetController.refreshIfActive());
+                    if (choiceManPanel != null) {
+                        SwingUtilities.invokeLater(() -> choiceManPanel.refresh(unlocks));
+                    }
                 }
             }
         }
@@ -422,7 +488,7 @@ public class ChoiceManPlugin extends Plugin {
     }
 
     /**
-     * @return whether an item is tracked by Choice Man (present in items.json).
+     * @return true if an item is tracked by Choice Man (present in items.json).
      */
     public boolean isInPlay(int itemId) {
         int canon = itemManager.canonicalize(itemId);
@@ -443,13 +509,38 @@ public class ChoiceManPlugin extends Plugin {
     }
 
     /**
-     * Compute total level from real levels only (test overrides removed).
+     * Compute total level from real levels only.
      */
     private int computeTotalLevel() {
         int sum = 0;
-        for (Skill s : TRACKED_SKILLS) {
-            sum += client.getRealSkillLevel(s);
-        }
+        for (Skill s : TRACKED_SKILLS) sum += client.getRealSkillLevel(s);
         return sum;
+    }
+
+    /* === Chat hint helpers === */
+
+    private void announceThresholdHint(int currentTotal) {
+        final int currentChoices = choiceCountForTotal(currentTotal);
+        final int next = nextThreshold(currentTotal);
+
+        if (next == -1) {
+            addGameMessage("Choice Man: You’re at the max — " + currentChoices + " options per pick.");
+            return;
+        }
+
+        final int remaining = Math.max(0, next - currentTotal);
+        final String levelsWord = (remaining == 1) ? "level" : "levels";
+        addGameMessage(String.format(
+                "Choice Man: %d %s until your picks show %d options (threshold: %d total).",
+                remaining, levelsWord, currentChoices + 1, next
+        ));
+    }
+
+    private void addGameMessage(String msg) {
+        try {
+            client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", msg, null);
+        } catch (Exception ex) {
+            log.debug("Failed to add chat message", ex);
+        }
     }
 }

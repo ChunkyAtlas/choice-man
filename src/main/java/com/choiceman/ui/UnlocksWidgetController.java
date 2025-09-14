@@ -19,12 +19,10 @@ import java.util.stream.Collectors;
 
 /**
  * Replaces the Music tab content with a grid of Choice Man unlocks (one icon per base) and a progress bar,
- * then restores the original UI on demand.
- * <p>
+ * then restores the original UI on demand. Provides a lightweight refresh path while active.
  */
 @Singleton
 public final class UnlocksWidgetController {
-    // Music group widget ids
     private static final int MUSIC_GROUP = 239;
 
     private static final int ROOT = 0;
@@ -37,17 +35,15 @@ public final class UnlocksWidgetController {
     private static final int TITLE = 8;
     private static final int STOCK_BAR = 9;
 
-    // Grid metrics
     private static final int ICON_SIZE = 32;
     private static final int PADDING = 4;
     private static final int COLUMNS = 4;
     private static final int MARGIN_X = 8;
     private static final int MARGIN_Y = 8;
 
-    // Favorites persistence
     private static final String CFG_GROUP = "choiceman";
     private static final String CFG_FAVS = "unlockFavorites";
-    private static final int STAR_SPRITE = 366;   // small yellow star in stock sprite sheet
+    private static final int STAR_SPRITE = 366;   // yellow star
 
     private final Client client;
     private final ClientThread clientThread;
@@ -56,28 +52,28 @@ public final class UnlocksWidgetController {
     private final ItemSpriteCache itemSpriteCache;
     private final SpriteOverrideManager spriteOverrideManager;
     private final ConfigManager configManager;
+
     /**
-     * Map of widget icon -> base name for hover tooltips. Kept stable across rebuilds while override is active.
+     * Icon widget -> base name for hover tooltips.
      */
     @Getter
     private final Map<Widget, String> iconBaseMap = new LinkedHashMap<>();
-    // Favorites
     private final Set<String> favoriteBases = new LinkedHashSet<>();
-    // Widgets created by the override (tracked for deterministic cleanup)
+
     private final List<Widget> createdScrollWidgets = new ArrayList<>();
     private final List<Widget> createdRootWidgets = new ArrayList<>();
     @Getter
     private volatile boolean overrideActive = false;
-    // Stock UI snapshots for restore
+
     private List<Widget> backupJukeboxStaticKids;
     private List<Widget> backupJukeboxDynamicKids;
     private List<Widget> backupScrollStaticKids;
     private List<Widget> backupScrollDynamicKids;
     private String originalTitleText;
-    // Stock top-row widgets we hide while override is active
+
     private Widget stockToggleAll; // 239.0[0]
     private Widget stockSearch;    // 239.0[1]
-    private Widget pluginToggle;   // "View Unlocks" button injected by MusicOpenButton
+    private Widget pluginToggle;   // "View Unlocks"
     private boolean favoritesLoaded = false;
 
     @Inject
@@ -115,24 +111,18 @@ public final class UnlocksWidgetController {
 
     private static void restoreChildren(Widget parent, List<Widget> stat, List<Widget> dyn) {
         if (parent == null) return;
-        if (stat != null) {
-            for (Widget w : stat)
-                if (w != null) {
-                    w.setHidden(false);
-                    w.revalidate();
-                }
-        }
-        if (dyn != null) {
-            for (Widget w : dyn)
-                if (w != null) {
-                    w.setHidden(false);
-                    w.revalidate();
-                }
-        }
+        if (stat != null) for (Widget w : stat)
+            if (w != null) {
+                w.setHidden(false);
+                w.revalidate();
+            }
+        if (dyn != null) for (Widget w : dyn)
+            if (w != null) {
+                w.setHidden(false);
+                w.revalidate();
+            }
         parent.revalidate();
     }
-
-    // Internals
 
     private static Widget[] merge(Widget[] a, Widget[] b) {
         if (a == null) return b;
@@ -143,10 +133,18 @@ public final class UnlocksWidgetController {
         return out;
     }
 
+    // internals
+
     /**
-     * Entry point from the Music tab button.
-     * Builds or refreshes the override UI from the current unlock state.
-     * No-op if there are no unlocks to display.
+     * If the override is currently visible, rebuild it to reflect latest state.
+     */
+    public void refreshIfActive() {
+        if (!overrideActive) return;
+        clientThread.invokeLater(this::applyOverride);
+    }
+
+    /**
+     * Entry point from the Music tab button; builds or refreshes the override UI.
      */
     public void overrideWithLatest() {
         if (unlocks.unlockedList().isEmpty()) {
@@ -156,8 +154,7 @@ public final class UnlocksWidgetController {
 
         if (!overrideActive) {
             overrideActive = true;
-            clientThread.invokeLater(() ->
-            {
+            clientThread.invokeLater(() -> {
                 applyOverride();
                 spriteOverrideManager.register();
             });
@@ -167,8 +164,7 @@ public final class UnlocksWidgetController {
     }
 
     /**
-     * Restores the stock Music tab UI and resets transient override state.
-     * Safe to call even if the override is not active.
+     * Restore the stock Music tab.
      */
     public void restore() {
         if (!overrideActive) {
@@ -180,8 +176,7 @@ public final class UnlocksWidgetController {
     }
 
     /**
-     * Ensures the stock top row widgets (toggle all, search) and the plugin's "View Unlocks" button are unhidden.
-     * Used when entering/leaving the Music tab so the stock UI is never stranded hidden.
+     * Ensure stock top-row controls and the "View Unlocks" button are visible.
      */
     public void restoreTopRowControls() {
         final Widget root = client.getWidget(MUSIC_GROUP, ROOT);
@@ -233,24 +228,16 @@ public final class UnlocksWidgetController {
     }
 
     private void toggleFavorite(String base) {
-        if (!favoriteBases.remove(base)) {
-            favoriteBases.add(base);
-        }
+        if (!favoriteBases.remove(base)) favoriteBases.add(base);
         saveFavorites();
         applyOverride(); // re-sort and redraw grid
     }
 
-    /**
-     * Builds the override UI in the Music tab:
-     * 1) Hides stock children under scrollable/jukebox and stores references for restore.
-     * 2) Creates a grid of item icons for each unlocked base, with an optional star badge for favorites.
-     * 3) Creates a progress bar and label stretched to the right frame edge.
-     * 4) Updates iconBaseMap for tooltip overlay.
-     */
+    // helpers
+
     private void applyOverride() {
         iconBaseMap.clear();
 
-        // Hide stock widgets we don't use in override
         for (int id = 9; id <= 19; id++) {
             final Widget w = client.getWidget(MUSIC_GROUP, id);
             if (w != null) w.setHidden(true);
@@ -264,7 +251,6 @@ public final class UnlocksWidgetController {
         final Widget scrollbar = client.getWidget(MUSIC_GROUP, SCROLLBAR);
         final Widget title = client.getWidget(MUSIC_GROUP, TITLE);
 
-        // Hide stock top-row controls while override is active
         if (root != null) {
             final Widget[] dyn = root.getDynamicChildren();
             if (dyn != null && dyn.length >= 2) {
@@ -295,7 +281,6 @@ public final class UnlocksWidgetController {
             title.revalidate();
         }
 
-        // Snapshot originals once for restore
         if (backupJukeboxStaticKids == null && jukebox != null) backupJukeboxStaticKids = copyChildren(jukebox, false);
         if (backupJukeboxDynamicKids == null && jukebox != null) backupJukeboxDynamicKids = copyChildren(jukebox, true);
         if (backupScrollStaticKids == null && scrollable != null)
@@ -303,9 +288,9 @@ public final class UnlocksWidgetController {
         if (backupScrollDynamicKids == null && scrollable != null)
             backupScrollDynamicKids = copyChildren(scrollable, true);
 
-        // Hide everything in stock containers and hard-clear any previous override widgets
         hideAllChildren(jukebox);
         hideAllChildren(scrollable);
+
         deleteWidgets(createdScrollWidgets);
         deleteWidgets(createdRootWidgets);
 
@@ -314,7 +299,6 @@ public final class UnlocksWidgetController {
             scrollable.revalidate();
         }
 
-        // Build data: representative id = smallest id for stable visuals
         final List<DisplayBase> bases = unlocks.unlockedList().stream()
                 .map(b -> new DisplayBase(b, pickRepId(b)))
                 .filter(db -> db.repId > 0)
@@ -324,7 +308,6 @@ public final class UnlocksWidgetController {
                 .comparing((DisplayBase db) -> !isFavorite(db.baseName))
                 .thenComparing(db -> db.baseName.toLowerCase(Locale.ROOT)));
 
-        // Icons grid with optional star badge
         if (scrollable != null && scrollbar != null) {
             int displayIndex = 0;
             for (DisplayBase db : bases) {
@@ -348,7 +331,6 @@ public final class UnlocksWidgetController {
                 icon.setOriginalY(y);
                 icon.revalidate();
 
-                // Left-click to toggle favorite (no context menu entry)
                 icon.setOnClickListener((JavaScriptCallback) (ScriptEvent ev) -> toggleFavorite(db.baseName));
                 icon.setHasListener(true);
 
@@ -375,16 +357,13 @@ public final class UnlocksWidgetController {
             scrollbar.revalidateScroll();
         }
 
-        // Progress bar + label
-        drawProgressStretchToFrame(title, frame, unlocks.unlockedList().size(), itemsRepo.getAllBases().size());
+        drawProgressStretchToFrame(title, frame,
+                unlocks.unlockedList().size(),
+                itemsRepo.getAllBases().size());
 
         if (root != null) root.revalidate();
     }
 
-    /**
-     * Draws a simple progress bar aligned with the stock bar coordinates and stretched to the frame's right edge.
-     * Creates three widgets (bg, fill, label) under ROOT and tracks them for cleanup.
-     */
     private void drawProgressStretchToFrame(Widget title, Widget frame, int unlocked, int total) {
         final Widget root = client.getWidget(MUSIC_GROUP, ROOT);
         if (root == null || title == null) return;
@@ -455,10 +434,6 @@ public final class UnlocksWidgetController {
         }
     }
 
-    /**
-     * Restores the stock Music UI by unhiding the original children and deleting all override widgets.
-     * Triggers onLoad listeners to let stock scripts reconstruct any ephemeral elements.
-     */
     private void revertOverride() {
         if (!overrideActive) return;
 
@@ -469,7 +444,6 @@ public final class UnlocksWidgetController {
         final Widget scrollbar = client.getWidget(MUSIC_GROUP, SCROLLBAR);
         final Widget title = client.getWidget(MUSIC_GROUP, TITLE);
 
-        // Hide top-row dynamic children we might have exposed
         if (root != null) {
             final Widget[] dynRoot = root.getDynamicChildren();
             if (dynRoot != null) {
@@ -528,7 +502,6 @@ public final class UnlocksWidgetController {
             pluginToggle.revalidate();
         }
 
-        // Re-fire onLoad listeners for stock widgets so their scripts rebuild internal content
         runOnLoad(root);
         runOnLoad(overlay);
         runOnLoad(scrollbar);
@@ -549,12 +522,6 @@ public final class UnlocksWidgetController {
         restoreTopRowControls();
     }
 
-    private void runOnLoad(Widget w) {
-        if (w == null || w.getOnLoadListener() == null) return;
-        client.createScriptEvent(w.getOnLoadListener()).setSource(w).run();
-        w.revalidate();
-    }
-
     private Widget findByAction(Widget parent, String action) {
         if (parent == null) return null;
         final Widget[] kids = merge(parent.getChildren(), parent.getDynamicChildren());
@@ -571,6 +538,12 @@ public final class UnlocksWidgetController {
             if (deeper != null) return deeper;
         }
         return null;
+    }
+
+    private void runOnLoad(Widget w) {
+        if (w == null || w.getOnLoadListener() == null) return;
+        client.createScriptEvent(w.getOnLoadListener()).setSource(w).run();
+        w.revalidate();
     }
 
     private void deleteWidgets(List<Widget> list) {
