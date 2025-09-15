@@ -89,6 +89,7 @@ public class ChoiceManOverlay extends Overlay {
     private ChoiceManConfig config;
     @Setter
     private java.util.function.Consumer<String> onPick;
+    @Setter private Runnable onDismiss;
 
     @Getter
     private volatile boolean active = false;
@@ -427,6 +428,9 @@ public class ChoiceManOverlay extends Overlay {
 
         fullyRevealed = new boolean[0];
         useGoldBgThisPresentation = false; // reset for next time
+        if (onDismiss != null) {
+            try { onDismiss.run(); } catch (Exception ignored) {}
+        }
     }
 
     @Override

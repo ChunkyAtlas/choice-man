@@ -51,7 +51,7 @@ public class ChoiceManPlugin extends Plugin {
     private static final int GE_SEARCH_BUILD_SCRIPT = 751;
     private static final int GE_GROUP_ID = 162;
     private static final int GE_RESULTS_CHILD = 51;
-
+    private static final String COL_RESET = "<col=000000>";
     private static final Skill[] TRACKED_SKILLS = java.util.Arrays.stream(Skill.values())
             .filter(s -> s != Skill.OVERALL)
             .toArray(Skill[]::new);
@@ -113,6 +113,19 @@ public class ChoiceManPlugin extends Plugin {
     private volatile boolean featuresActive = false;
     private volatile int lastKnownTotal = -1;
     private volatile boolean baselineReady = false;
+
+    // Chat color helpers
+    private static String blue(String s) {
+        return "<col=0055aa>" + s + COL_RESET;
+    }
+
+    private static String red(String s) {
+        return "<col=ff4040>" + s + COL_RESET;
+    }
+
+    private static String black(String s) {
+        return "<col=000000>" + s + COL_RESET;
+    }
 
     /**
      * Number of offer cards scales with total level.
@@ -188,6 +201,9 @@ public class ChoiceManPlugin extends Plugin {
         choiceManOverlay.setOnPick(baseName -> {
             unlocks.unlockBase(baseName, itemsRepo.getIdsForBase(baseName));
             unlocks.saveToDisk();
+
+            choiceManOverlay.setOnDismiss(() ->
+                    clientThread.invoke(this::startChoiceIfNeeded));
 
             // Live-refresh UI that depends on unlock state
             clientThread.invokeLater(() -> unlocksWidgetController.refreshIfActive());
@@ -394,12 +410,6 @@ public class ChoiceManPlugin extends Plugin {
     }
 
     /**
-     * Intentionally unused; awarding is handled on GameTick to avoid double counting.
-     */
-    @Subscribe
-    public void onStatChanged(StatChanged event) { /* no-op */ }
-
-    /**
      * Start a presentation if we have pending choices and the overlay is idle.
      * Pulls one milestone flag from the queue if available.
      */
@@ -517,23 +527,25 @@ public class ChoiceManPlugin extends Plugin {
         return sum;
     }
 
-    /* === Chat hint helpers === */
-
     private void announceThresholdHint(int currentTotal) {
         final int currentChoices = choiceCountForTotal(currentTotal);
         final int next = nextThreshold(currentTotal);
 
+        // Black brackets + darker blue label
+        final String prefix = black("[") + blue("Choice Man") + black("] ");
+
         if (next == -1) {
-            addGameMessage("Choice Man: You’re at the max — " + currentChoices + " options per pick.");
+            addGameMessage(prefix + "You’re at the max — " + red(currentChoices + " options") + " per pick.");
             return;
         }
 
         final int remaining = Math.max(0, next - currentTotal);
         final String levelsWord = (remaining == 1) ? "level" : "levels";
-        addGameMessage(String.format(
-                "Choice Man: %d %s until your picks show %d options (threshold: %d total).",
-                remaining, levelsWord, currentChoices + 1, next
-        ));
+
+        addGameMessage(prefix
+                + red(remaining + " " + levelsWord) + " until your picks show "
+                + red((currentChoices + 1) + " options")
+                + " (threshold: " + red(String.valueOf(next)) + " total).");
     }
 
     private void addGameMessage(String msg) {
