@@ -717,7 +717,7 @@ public class ChoiceManOverlay extends Overlay {
             g.setStroke(s);
         }
 
-        Font nameFont = g.getFont().deriveFont(Font.PLAIN, NAME_FONT_SIZE);
+        Font nameFont = g.getFont().deriveFont(Font.BOLD, NAME_FONT_SIZE);
         FontMetrics nfm = g.getFontMetrics(nameFont);
 
         int maxTextWidth = card.width - (NAME_SIDE_PADDING * 2);
