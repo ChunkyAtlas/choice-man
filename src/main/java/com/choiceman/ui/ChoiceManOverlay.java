@@ -44,7 +44,7 @@ public class ChoiceManOverlay extends Overlay {
     private static final int CARD_GAP = 12;
     private static final int ICON_W = 28;
     private static final int ICON_H = 28;
-    private static final float NAME_FONT_SIZE = 14f;
+    private static final float NAME_FONT_SIZE = 15.5f;
     private static final int NAME_MAX_LINES = 2;
     private static final int NAME_SIDE_PADDING = 8;
     private static final int NAME_LINE_SPACING = 0;
@@ -726,29 +726,55 @@ public class ChoiceManOverlay extends Overlay {
         final int spacing = 6;
         final int lineH = nfm.getHeight() + NAME_LINE_SPACING;
         final int textBlockH = lines.size() * lineH - NAME_LINE_SPACING;
-        final int contentH = ICON_H + spacing + textBlockH;
 
-        final int topY = (card.height - contentH) / 2;
+        int iconW = ICON_W;
+        int iconH = ICON_H;
 
         int anyId = repo != null ? repo.getIdsForBase(base).stream().findFirst().orElse(0) : 0;
-        Image img = (itemManager != null && anyId > 0) ? itemManager.getImage(anyId) : null;
+        BufferedImage img = (itemManager != null && anyId > 0) ? itemManager.getImage(anyId) : null;
+
         if (img != null) {
-            Object prevInterp = g.getRenderingHint(RenderingHints.KEY_INTERPOLATION);
-            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
-            int ix = (card.width - ICON_W) / 2;
+            int srcW = Math.max(1, img.getWidth());
+            int srcH = Math.max(1, img.getHeight());
+
+            int maxIconW = card.width - (NAME_SIDE_PADDING * 2);
+            int scaleInt = 1;
+            if (srcW * 2 <= maxIconW) {
+                scaleInt = 2;
+            }
+            iconW = srcW * scaleInt;
+            iconH = srcH * scaleInt;
+        }
+
+        final int contentH = iconH + spacing + textBlockH;
+        final int topY = (card.height - contentH) / 2;
+
+        if (img != null) {
+            int ix = (card.width - iconW) / 2;
             int iy = topY;
-            g.drawImage(img, ix, iy, ICON_W, ICON_H, null);
-            if (prevInterp != null) {
-                try {
-                    g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, prevInterp);
-                } catch (IllegalArgumentException ignored) {
+
+            Object prevInterp = g.getRenderingHint(RenderingHints.KEY_INTERPOLATION);
+            try {
+                // Integer multiple → nearest-neighbor (crisp). Otherwise, bicubic as a safe fallback.
+                boolean integerMultiple = (iconW % Math.max(1, img.getWidth()) == 0) &&
+                        (iconH % Math.max(1, img.getHeight()) == 0);
+                g.setRenderingHint(
+                        RenderingHints.KEY_INTERPOLATION,
+                        integerMultiple
+                                ? RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR
+                                : RenderingHints.VALUE_INTERPOLATION_BICUBIC
+                );
+                g.drawImage(img, ix, iy, iconW, iconH, null);
+            } finally {
+                if (prevInterp != null) {
+                    try { g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, prevInterp); } catch (IllegalArgumentException ignored) {}
                 }
             }
         }
 
         g.setFont(nameFont);
         g.setColor(new Color(255, 255, 255, Math.min(255, (int) (255 * alpha))));
-        int baseline = topY + ICON_H + spacing + nfm.getAscent();
+        int baseline = topY + iconH + spacing + nfm.getAscent();
         for (String line : lines) {
             drawCentered(g, line, 0, baseline, card.width);
             baseline += lineH;
