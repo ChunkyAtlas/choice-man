@@ -461,6 +461,56 @@ public class ChoiceManPlugin extends Plugin {
         }
     }
 
+    @Subscribe
+    public void onCommandExecuted(CommandExecuted e) {
+        if (!featuresActive) return;                  // only when plugin is active
+        if (!"roll".equalsIgnoreCase(e.getCommand())) return;
+
+        // Expected forms:
+        // ::roll 5 unlocks
+        // ::roll 3
+        // ::roll unlocks 4
+        int requested = -1;
+        for (String arg : e.getArguments()) {
+            try {
+                int v = Integer.parseInt(arg.trim());
+                if (v >= 1 && v <= 5) {
+                    requested = v;
+                    break;
+                }
+            } catch (NumberFormatException ignore) {
+            }
+        }
+        if (requested == -1) {
+            addGameMessage(black("[") + blue("Choice Man") + black("] ")
+                    + "Usage: ::roll " + red("N") + " unlocks  (N = 1–5).");
+            return;
+        }
+
+        // If overlay is already active, don't collide with an in-progress pick
+        if (choiceManOverlay.isActive()) {
+            addGameMessage(black("[") + blue("Choice Man") + black("] ")
+                    + "A roll is already in progress.");
+            return;
+        }
+
+        // Build an offer of N random still-locked bases
+        List<String> pool = itemsRepo.getAllBasesStillLocked(unlocks);
+        if (pool.isEmpty()) {
+            addGameMessage(black("[") + blue("Choice Man") + black("] ")
+                    + "No locked items remain to roll.");
+            return;
+        }
+
+        Collections.shuffle(pool, ThreadLocalRandom.current());
+        List<String> offer = pool.stream()
+                .limit(Math.min(requested, pool.size()))
+                .collect(Collectors.toList());
+
+        // Trigger a normal (non-milestone) presentation with exactly N choices
+        choiceManOverlay.presentChoicesSequential(offer, /*milestone=*/false);
+    }
+
     /**
      * After GE search list is built, hide entries that are locked or never obtained.
      */
