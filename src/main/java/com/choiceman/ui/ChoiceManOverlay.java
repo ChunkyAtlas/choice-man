@@ -16,122 +16,136 @@ import net.runelite.client.util.ImageUtil;
 
 import javax.inject.Inject;
 import javax.inject.Singleton;
-import javax.sound.sampled.*;
 import java.awt.*;
 import java.awt.event.MouseEvent;
-import java.awt.geom.AffineTransform;
 import java.awt.image.BufferedImage;
-import java.io.ByteArrayInputStream;
-import java.io.IOException;
-import java.io.InputStream;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
 import java.util.List;
-import java.util.concurrent.ThreadLocalRandom;
 
 /**
- * Choice Man pick overlay. Renders selectable “cards” for a set of base names
- * and plays reveal/selection animations. Can be minimized into a pill
- * that shows how many pending choices are queued.
+ * Overlay responsible for rendering and interacting with Choice Man's “pick an unlock” UI.
+ * <p>
+ * Features:
+ * <ul>
+ *   <li>Animated sequential reveal of cards with hover/select SFX.</li>
+ *   <li>Optional “milestone” gold background styling per presentation.</li>
+ *   <li>Minimize/restore pill with pending count when multiple picks are queued.</li>
+ *   <li>Strict, idempotent presentation lifecycle: {@link #presentChoicesSequential(List, boolean)} → (animations) → {@link #dismiss()}.</li>
+ * </ul>
+ * Threading & state:
+ * <ul>
+ *   <li>All rendering executes on RuneLite's overlay paint thread via {@link #render(Graphics2D)}.</li>
+ *   <li>User input is handled by a local {@link MouseAdapter} returned from {@link #getMouseAdapter()}.</li>
+ *   <li>Volatile fields guard render/input races; UI mutations are intentionally lightweight.</li>
+ * </ul>
  */
 @Singleton
 public class ChoiceManOverlay extends Overlay {
-    private static final int ROOT_Y = 32;
-    private static final int TITLE_GAP_Y = 8;
-    private static final int CARD_W = 140;
-    private static final int CARD_H = 130;
-    private static final int CARD_GAP = 12;
-    private static final int ICON_W = 28;
-    private static final int ICON_H = 28;
-    private static final float NAME_FONT_SIZE = 15.5f;
-    private static final int NAME_MAX_LINES = 2;
-    private static final int NAME_SIDE_PADDING = 8;
-    private static final int NAME_LINE_SPACING = 0;
-    private static final int MIN_BTN_W = 92;
-    private static final int MIN_BTN_H = 22;
-    private static final int RESTORE_W = 170;
-    private static final int RESTORE_H = 28;
+    /**
+     * Top padding for the overlay root; used to position title and cards.
+     */
+    private static final int ROOT_Y = 32, TITLE_GAP_Y = 8;
+
+    /**
+     * Card dimensions and horizontal/vertical spacing.
+     */
+    private static final int CARD_W = 140, CARD_H = 130, CARD_GAP = 12;
+
+    /**
+     * Dimensions for the minimize button (top-right pill).
+     */
+    private static final int MIN_BTN_W = 92, MIN_BTN_H = 22;
+
+    /**
+     * Dimensions for the restore pill (shown while minimized).
+     */
+    private static final int RESTORE_W = 170, RESTORE_H = 28;
+
+    /**
+     * Subtle per-row upward lift to create a stacked look.
+     */
     private static final int LIFT_PER_ROW = 10;
-    private static final int POP_REVEAL_MS = 420;
-    private static final int EXPLODE_MS = 650;
-    private static final int SEL_MOVE_MS = 700;
-    private static final int SEL_HOLD_MS = 220;
-    private static final int SEL_FADE_MS = 520;
+
+    /**
+     * Default timings (ms) for popup reveal and selection animation phases.
+     */
+    private static final int POP_REVEAL_MS = 420, EXPLODE_MS = 650;
+    private static final int SEL_MOVE_MS = 700, SEL_HOLD_MS = 220, SEL_FADE_MS = 520;
+
+    /**
+     * Total time of the select sequence: explode → move → hold → fade.
+     */
     private static final int ANIM_TOTAL = EXPLODE_MS + SEL_MOVE_MS + SEL_HOLD_MS + SEL_FADE_MS;
 
-    private final Client client;
+    /**
+     * Title placement fine-tuning.
+     */
+    private static final int TITLE_TOP_Y = 0, CARDS_PULL_UP_Y = 9;
 
+    private final Client client;
+    private final CardRenderer renderer;
+    private final PickAnimationEngine anim;
+    // Card layout bookkeeping
     private final List<Rectangle> cardBounds = new ArrayList<>();
     private final Object boundsLock = new Object();
-
-    private final Map<Integer, List<Particle>> particles = new HashMap<>();
+    // SFX gating (play once per card)
     private final Set<Integer> popupPlayed = Collections.synchronizedSet(new HashSet<>());
-
     private ItemManager itemManager;
     private ItemsRepository repo;
     private ChoiceManUnlocks unlocks;
-
+    private BufferedImage titleImg, cardBgDefault, cardBgGold;
     /**
-     * Default presentation background.
-     */
-    private BufferedImage cardBgDefault;
-    /**
-     * Gold presentation background (milestones 200/500/1000).
-     */
-    private BufferedImage cardBgGold;
-    /**
-     * Which background to use for the *current* presentation.
+     * If true, use milestone (gold) card background for the current presentation.
      */
     private volatile boolean useGoldBgThisPresentation = false;
-
     @Setter
     private ChoiceManConfig config;
+    /**
+     * Callback invoked when the user selects a base (card). Receives the selected base name.
+     */
     @Setter
     private java.util.function.Consumer<String> onPick;
-    @Setter private Runnable onDismiss;
-
+    /**
+     * Callback invoked after the presentation fully dismisses (post-selection or manual dismiss).
+     */
+    @Setter
+    private Runnable onDismiss;
+    /**
+     * Whether a presentation is currently visible (not minimized) or minimized.
+     */
     @Getter
     private volatile boolean active = false;
+    // Runtime presentation state
     private volatile List<String> choices;
     private volatile Instant presentedAt;
-
-    private volatile int hoveredIndex = -1;
-    private int lastHoverIndex = -1;
-
+    private volatile int hoveredIndex = -1, lastHoverIndex = -1;
     private volatile boolean minimized = false;
-    private volatile int pendingCount = 0;
-
-    private Rectangle minimizeBounds = null;
-    private Rectangle restoreBounds = null;
-    private volatile boolean hoverMinimize = false;
-    private volatile boolean hoverRestore = false;
-
+    private volatile int pendingCount = 0; // number of queued picks; shown in the restore pill
+    // Hit-test rectangles for controls
+    private Rectangle minimizeBounds = null, restoreBounds = null;
+    private volatile boolean hoverMinimize = false, hoverRestore = false;
+    // Selection animation state
     private volatile boolean animating = false;
     private volatile int selectedIndex = -1;
     private volatile Instant animStart = null;
     private volatile boolean pickSent = false;
-    private volatile boolean particlesSeeded = false;
-
-    /**
-     * Updated every render; true only when a card has fully finished revealing.
-     */
     private volatile boolean[] fullyRevealed = new boolean[0];
-
-    private Sfx sfxHover;
-    private Sfx sfxPopup;
-    private Sfx sfxSelect;
+    /**
+     * Input handler for hover/select and minimize/restore interactions.
+     * <p>
+     * All coordinates are translated to overlay-local space to match render-time layout.
+     */
     private final MouseAdapter mouse = new MouseAdapter() {
         private Point toOverlayLocal(MouseEvent e) {
             Rectangle ob = getBounds();
-            if (ob == null) return null;
-            return new Point(e.getX() - ob.x, e.getY() - ob.y);
+            return (ob == null) ? null : new Point(e.getX() - ob.x, e.getY() - ob.y);
         }
 
         @Override
         public MouseEvent mouseMoved(MouseEvent e) {
-            if (!active || choices == null || choices.isEmpty()) return e;
-            if (animating) return e;
+            if (!active || choices == null || choices.isEmpty() || animating) return e;
             Point lp = toOverlayLocal(e);
             if (lp == null) return e;
 
@@ -141,15 +155,9 @@ public class ChoiceManOverlay extends Overlay {
                 hoverMinimize = false;
             } else {
                 int newHover = indexAt(lp);
-                if (!isCardFullyRevealed(newHover)) {
-                    newHover = -1;
-                }
-                if (newHover != hoveredIndex) {
-                    hoveredIndex = newHover;
-                }
-                if (hoveredIndex >= 0 && hoveredIndex != lastHoverIndex) {
-                    if (sfxHover != null) sfxHover.play();
-                }
+                if (!isCardFullyRevealed(newHover)) newHover = -1;
+                if (newHover != hoveredIndex) hoveredIndex = newHover;
+                if (hoveredIndex >= 0 && hoveredIndex != lastHoverIndex) anim.playHover();
                 lastHoverIndex = hoveredIndex;
                 hoverMinimize = minimizeBounds != null && minimizeBounds.contains(lp);
                 hoverRestore = false;
@@ -159,16 +167,10 @@ public class ChoiceManOverlay extends Overlay {
 
         @Override
         public MouseEvent mousePressed(MouseEvent e) {
-            if (!active || choices == null || choices.isEmpty()) return e;
-
-            // Only allow left button to select; ignore middle/right.
-            if (e.getButton() != MouseEvent.BUTTON1) {
-                return e;
-            }
-
+            if (!active || choices == null || choices.isEmpty() || animating) return e;
+            if (e.getButton() != MouseEvent.BUTTON1) return e;
             Point lp = toOverlayLocal(e);
             if (lp == null) return e;
-            if (animating) return e;
 
             if (minimized && restoreBounds != null && restoreBounds.contains(lp)) {
                 minimized = false;
@@ -186,19 +188,14 @@ public class ChoiceManOverlay extends Overlay {
             if (minimized) return e;
 
             int idx = indexAt(lp);
-            if (!isCardFullyRevealed(idx)) {
-                return e; // guard: do not allow selecting until fully revealed
-            }
+            if (!isCardFullyRevealed(idx)) return e;
 
-            if (idx >= 0 && idx < (choices != null ? choices.size() : 0)) {
-                if (sfxSelect != null) sfxSelect.play();
-
+            if (idx >= 0 && idx < choices.size()) {
+                anim.playSelect();
                 selectedIndex = idx;
                 animating = true;
                 animStart = Instant.now();
-                pickSent = false;
-                particles.clear();
-                particlesSeeded = false;
+                anim.resetParticles();
                 hoveredIndex = -1;
                 lastHoverIndex = -1;
                 e.consume();
@@ -206,170 +203,83 @@ public class ChoiceManOverlay extends Overlay {
             return e;
         }
     };
-    private float sfxVolumeLinear = 1f;
 
+    /**
+     * Constructs the overlay and sets its position/layer.
+     * The overlay paints above game widgets at the top center of the viewport.
+     *
+     * @param client RuneLite client (used for viewport size).
+     */
     @Inject
     public ChoiceManOverlay(Client client) {
         this.client = client;
         setPosition(OverlayPosition.TOP_CENTER);
         setLayer(OverlayLayer.ABOVE_WIDGETS);
+        this.renderer = new CardRenderer(this::getAccent);
+        this.anim = new PickAnimationEngine();
     }
 
-    private static void drawCenteredAcross(Graphics2D g, String s, int containerWidth, int baselineY) {
-        FontMetrics fm = g.getFontMetrics();
-        int sw = fm.stringWidth(s);
-        int x = Math.max(0, (containerWidth - sw) / 2);
-        g.drawString(s, x, baselineY);
-    }
-
-    private static void drawCentered(Graphics2D g, String s, int x, int baselineY, int w) {
-        FontMetrics fm = g.getFontMetrics();
-        int sw = fm.stringWidth(s);
-        g.drawString(s, x + (w - sw) / 2, baselineY);
-    }
-
-    private static List<String> wrapText(String text, FontMetrics fm, int maxWidth, int maxLines) {
-        List<String> out = new ArrayList<>();
-        if (text == null || text.isEmpty() || fm.stringWidth(text) <= maxWidth) {
-            out.add(text == null ? "" : text);
-            return out;
-        }
-        String[] words = text.split("\\s+");
-        StringBuilder line = new StringBuilder();
-
-        for (int i = 0; i < words.length; i++) {
-            String next = (line.length() == 0) ? words[i] : line + " " + words[i];
-            if (fm.stringWidth(next) <= maxWidth) {
-                line.setLength(0);
-                line.append(next);
-            } else {
-                if (line.length() == 0) out.add(hardBreak(words[i], fm, maxWidth));
-                else {
-                    out.add(line.toString());
-                    if (fm.stringWidth(words[i]) > maxWidth) out.add(hardBreak(words[i], fm, maxWidth));
-                    else line = new StringBuilder(words[i]);
-                }
-                if (out.size() == maxLines) {
-                    String last = out.get(out.size() - 1);
-                    out.set(out.size() - 1, ellipsize(last + (line.length() == 0 ? "" : " " + line), fm, maxWidth));
-                    return out;
-                }
-            }
-        }
-
-        if (line.length() > 0) {
-            if (out.size() < maxLines) out.add(line.toString());
-            else {
-                String last = out.get(out.size() - 1);
-                out.set(out.size() - 1, ellipsize(last + " " + line, fm, maxWidth));
-            }
-        }
-        return out;
-    }
-
-    private static String hardBreak(String word, FontMetrics fm, int maxWidth) {
-        if (fm.stringWidth(word) <= maxWidth) return word;
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < word.length(); i++) {
-            sb.append(word.charAt(i));
-            if (fm.stringWidth(sb.toString() + "…") > maxWidth) {
-                if (sb.length() > 1) sb.setLength(sb.length() - 1);
-                sb.append("…");
-                break;
-            }
-        }
-        return sb.toString();
-    }
-
-    private static String ellipsize(CharSequence s, FontMetrics fm, int maxWidth) {
-        String str = s.toString().trim();
-        if (fm.stringWidth(str) <= maxWidth) return str;
-        String ell = "…";
-        while (str.length() > 0 && fm.stringWidth(str + ell) > maxWidth) {
-            str = str.substring(0, str.length() - 1);
-        }
-        return str + ell;
-    }
-
-    private static double cubicOut(double t) {
-        double f = t - 1.0;
-        return f * f * f + 1.0;
-    }
-
-    private static float clamp01(float f) {
-        return f < 0 ? 0 : (f > 1 ? 1 : f);
-    }
-
-    private static int clamp255(int v) {
-        return Math.max(0, Math.min(255, v));
-    }
-
-    private static float lerp(float a, float b, float t) {
-        return (a + (b - a) * t);
-    }
-
-    private static float lerp(int a, int b, float t) {
-        return a + (b - a) * t;
-    }
-
+    /**
+     * @return The mouse listener to register with the {@code MouseManager}
+     * when enabling the overlay, and unregister on disable.
+     */
     public MouseListener getMouseAdapter() {
         return mouse;
     }
 
+    /**
+     * Update the count shown on the minimized/restore pill.
+     * Has no visual effect when the overlay is fully visible.
+     *
+     * @param count queued pick count (clamped at 0+).
+     */
     public void setPendingCount(int count) {
         pendingCount = Math.max(0, count);
     }
 
     /**
-     * Load both default and gold backgrounds.
+     * Load images and initialize audio assets for the overlay.
+     * Must be called before presenting choices.
+     *
+     * @param bgPathDefault path to the default card background.
+     * @param bgPathGold    path to the milestone (gold) card background.
+     * @param itemManager   RuneLite item manager for icons/IDs.
+     * @param repo          repository mapping base names to item IDs and metadata.
+     * @param unlocks       unlock state (used for rendering obtained/unlocked visuals if needed).
      */
-    public void setAssets(String bgPathDefault, String bgPathGold, ItemManager itemManager, ItemsRepository repo, ChoiceManUnlocks unlocks) {
+    public void setAssets(String bgPathDefault, String bgPathGold,
+                          ItemManager itemManager, ItemsRepository repo, ChoiceManUnlocks unlocks) {
         this.cardBgDefault = ImageUtil.loadImageResource(getClass(), bgPathDefault);
         this.cardBgGold = ImageUtil.loadImageResource(getClass(), bgPathGold);
+        this.titleImg = ImageUtil.loadImageResource(getClass(), "/com/choiceman/ui/Unlock_an_Item.png");
         this.itemManager = itemManager;
         this.repo = repo;
         this.unlocks = unlocks;
 
-        try {
-            sfxHover = Sfx.load("/com/choiceman/sounds/CardMouseover.wav", 4);
-        } catch (Exception ignored) {
-        }
-        try {
-            sfxPopup = Sfx.load("/com/choiceman/sounds/CardPopup.wav", 6);
-        } catch (Exception ignored) {
-        }
-        try {
-            sfxSelect = Sfx.load("/com/choiceman/sounds/CardSelection.wav", 3);
-        } catch (Exception ignored) {
-        }
-
+        anim.loadSfx(
+                "/com/choiceman/sounds/CardMouseover.wav",
+                "/com/choiceman/sounds/CardPopup.wav",
+                "/com/choiceman/sounds/CardSelection.wav"
+        );
         if (config != null) setSfxVolumePercent(config.sfxVolume());
     }
 
     /**
-     * Backwards-compatible helper if only one path was provided.
+     * Sets SFX volume (0–100).
+     *
+     * @param percent percentage (0 = muted, 100 = full volume).
      */
-    public void setAssets(String bgPathDefault, ItemManager itemManager, ItemsRepository repo, ChoiceManUnlocks unlocks) {
-        setAssets(bgPathDefault, bgPathDefault, itemManager, repo, unlocks);
-    }
-
     public void setSfxVolumePercent(int percent) {
-        final float v = clamp01(percent / 100f);
-        sfxVolumeLinear = v;
-        if (sfxHover != null) sfxHover.setVolume(v);
-        if (sfxPopup != null) sfxPopup.setVolume(v);
-        if (sfxSelect != null) sfxSelect.setVolume(v);
+        anim.setVolumePercent(percent);
     }
 
     /**
-     * Present with default (non-milestone) background.
-     */
-    public void presentChoicesSequential(List<String> bases) {
-        presentChoicesSequential(bases, false);
-    }
-
-    /**
-     * Present with explicit milestone background selection.
+     * Begins a new pick presentation with the provided list of base names.
+     * Cards reveal in sequence with a small per-card delay. If {@code milestone} is true,
+     * cards use the gold background for this presentation only.
+     *
+     * @param bases     ordered list of base names to present as choices (1–5 typical).
+     * @param milestone whether to render with milestone (gold) styling.
      */
     public void presentChoicesSequential(List<String> bases, boolean milestone) {
         this.useGoldBgThisPresentation = milestone;
@@ -380,86 +290,76 @@ public class ChoiceManOverlay extends Overlay {
 
         hoveredIndex = -1;
         lastHoverIndex = -1;
-        hoverMinimize = false;
-        hoverRestore = false;
-        minimizeBounds = null;
-        restoreBounds = null;
+        hoverMinimize = hoverRestore = false;
+        minimizeBounds = restoreBounds = null;
 
         animating = false;
         selectedIndex = -1;
         animStart = null;
         pickSent = false;
-        particles.clear();
-        particlesSeeded = false;
+        anim.resetAll();
         popupPlayed.clear();
 
         synchronized (boundsLock) {
             cardBounds.clear();
         }
-
         fullyRevealed = new boolean[bases.size()];
-
         setSfxVolumePercent(config != null ? config.sfxVolume() : 100);
     }
 
+    /**
+     * Immediately dismisses the current presentation, clearing all transient state,
+     * and invokes {@link #onDismiss} if set. Safe to call even if not active.
+     */
     public void dismiss() {
         active = false;
         choices = null;
         presentedAt = null;
         minimized = false;
-        hoveredIndex = -1;
-        lastHoverIndex = -1;
-        hoverMinimize = false;
-        hoverRestore = false;
-        minimizeBounds = null;
-        restoreBounds = null;
-
+        hoveredIndex = lastHoverIndex = -1;
+        hoverMinimize = hoverRestore = false;
+        minimizeBounds = restoreBounds = null;
         animating = false;
         selectedIndex = -1;
         animStart = null;
         pickSent = false;
-        particles.clear();
-        particlesSeeded = false;
+        anim.resetAll();
         popupPlayed.clear();
 
         synchronized (boundsLock) {
             cardBounds.clear();
         }
-
         fullyRevealed = new boolean[0];
-        useGoldBgThisPresentation = false; // reset for next time
-        if (onDismiss != null) {
-            try { onDismiss.run(); } catch (Exception ignored) {}
+        useGoldBgThisPresentation = false;
+        if (onDismiss != null) try {
+            onDismiss.run();
+        } catch (Exception ignored) {
         }
     }
 
+    /**
+     * Main paint entry for the overlay. Draws title, cards, controls, and selection animation.
+     * The method returns the final painted area to help RuneLite place subsequent overlays.
+     *
+     * @param g the graphics context provided by RuneLite.
+     * @return a {@link Dimension} of the rendered bounds, or {@code null} if nothing is drawn.
+     */
     @Override
     public Dimension render(Graphics2D g) {
         final List<String> local = choices;
         if (!active || local == null || local.isEmpty()) return null;
 
-        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-        g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+        renderer.enableAA(g);
 
-        int availW = client.getViewportWidth();
-        int availH = client.getViewportHeight();
-        if (availW <= 0) {
-            Rectangle clip = g.getClipBounds();
-            availW = (clip != null ? clip.width : 765);
-        }
-        if (availH <= 0) availH = 503;
+        int availW = Math.max(1, client.getViewportWidth());
+        int availH = Math.max(1, client.getViewportHeight());
+        if (minimized) return renderer.drawRestorePill(g, availW, ROOT_Y, RESTORE_W, RESTORE_H,
+                pendingCount, b -> restoreBounds = b, this::getAccent, hoverRestore);
 
-        if (minimized) {
-            return renderRestorePill(g, availW);
-        }
+        // Title
+        int rowY = renderer.drawTitle(g, titleImg, availW, TITLE_TOP_Y, TITLE_GAP_Y, CARDS_PULL_UP_Y);
 
-        g.setFont(g.getFont().deriveFont(Font.BOLD, 16f));
-        g.setColor(Color.WHITE);
-        final int titleY = ROOT_Y + 18;
-        drawCenteredAcross(g, "Choose your unlock", availW, titleY);
-
-        final int rowY = ROOT_Y + 24 + TITLE_GAP_Y;
-
+        // Reveal layout
         long ms = Duration.between(presentedAt, Instant.now()).toMillis();
         final int revealMs = (config != null ? Math.max(120, config.choiceRevealMs()) : POP_REVEAL_MS);
 
@@ -470,6 +370,7 @@ public class ChoiceManOverlay extends Overlay {
 
         boolean[] revealSnapshot = new boolean[local.size()];
         List<Rectangle> newBounds = new ArrayList<>(local.size());
+
         for (int i = 0; i < local.size(); i++) {
             int row = i / cols;
             int startIndexOfRow = row * cols;
@@ -486,7 +387,7 @@ public class ChoiceManOverlay extends Overlay {
             int y = liftedY;
 
             long delay = (long) (i * revealMs * 0.6);
-            float tReveal = clamp01((ms - delay) / (float) revealMs);
+            float tReveal = PickAnimationEngine.clamp01((ms - delay) / (float) revealMs);
             boolean fully = tReveal >= 1.0f;
             revealSnapshot[i] = fully;
 
@@ -494,92 +395,77 @@ public class ChoiceManOverlay extends Overlay {
                 newBounds.add(null);
                 continue;
             }
+            if (!animating && popupPlayed.add(i)) anim.playPopup();
 
-            if (!animating && !popupPlayed.contains(i)) {
-                popupPlayed.add(i);
-                if (sfxPopup != null) sfxPopup.play();
-            }
-
-            double ease = cubicOut(tReveal);
+            double ease = PickAnimationEngine.cubicOut(tReveal);
             int slide = (int) ((1.0 - ease) * 24);
-
-            Rectangle card = new Rectangle(x, y + slide, CARD_W, CARD_H);
-            newBounds.add(card);
+            newBounds.add(new Rectangle(x, y + slide, CARD_W, CARD_H));
         }
 
         fullyRevealed = revealSnapshot;
-
         synchronized (boundsLock) {
             cardBounds.clear();
             cardBounds.addAll(newBounds);
         }
 
-        if (animating && !particlesSeeded) {
-            seedParticles(newBounds, selectedIndex);
-            particlesSeeded = true;
+        if (animating && !anim.particlesSeeded()) {
+            anim.seedParticles(newBounds, selectedIndex);
         }
 
         long animElapsed = animating ? Duration.between(animStart, Instant.now()).toMillis() : 0;
-        float explodeT = animating ? clamp01(animElapsed / (float) EXPLODE_MS) : 0f;
+        float explodeT = animating ? PickAnimationEngine.clamp01(animElapsed / (float) EXPLODE_MS) : 0f;
 
+        // Non-selected cards
         for (int i = 0; i < local.size(); i++) {
             if (i == selectedIndex) continue;
             Rectangle card = newBounds.get(i);
             if (card == null && !animating) continue;
-            String base = local.get(i);
 
             long delay = (long) (i * revealMs * 0.6);
-            float tReveal = clamp01((ms - delay) / (float) revealMs);
+            float tReveal = PickAnimationEngine.clamp01((ms - delay) / (float) revealMs);
             if (!animating) {
-                float easeReveal = (float) cubicOut(tReveal);
-                float alpha = easeReveal;
-                float scale = 0.92f + 0.08f * easeReveal;
+                float easeReveal = (float) PickAnimationEngine.cubicOut(tReveal);
+                float alpha = easeReveal, scale = 0.92f + 0.08f * easeReveal;
                 boolean hovered = (i == hoveredIndex);
-                drawCard(g, card, base, hovered, alpha, scale, 0f, false);
+                renderer.drawCard(g, card, local.get(i), hovered, alpha, scale,
+                        0f, false, useGoldBgThisPresentation ? cardBgGold : cardBgDefault,
+                        itemManager, repo, this::getAccent);
                 continue;
             }
-
-            float e = explodeT;
-            float scale = 1.0f - 0.4f * e;
-            float alpha = 1.0f - e;
-
+            float scale = 1.0f - 0.4f * explodeT;
+            float alpha = 1.0f - explodeT;
             if (alpha > 0.02f && card != null) {
-                drawCard(g, card, base, false, alpha, scale, 0f, false);
+                renderer.drawCard(g, card, local.get(i), false, alpha, scale,
+                        0f, false, useGoldBgThisPresentation ? cardBgGold : cardBgDefault,
+                        itemManager, repo, this::getAccent);
             }
-
-            List<Particle> ps = particles.get(i);
-            if (ps != null) drawParticles(g, ps, e);
+            anim.drawParticles(g, i, explodeT, EXPLODE_MS);
         }
 
+        // Selected card path
         if (selectedIndex >= 0 && selectedIndex < local.size()) {
-            Rectangle startCard = (selectedIndex < newBounds.size()) ? newBounds.get(selectedIndex) : null;
+            Rectangle startCard = newBounds.get(selectedIndex);
             if (startCard != null) {
-                String base = local.get(selectedIndex);
-
-                int targetX = (availW - CARD_W) / 2;
-                int targetY = (availH - CARD_H) / 2;
-
-                int sx = startCard.x;
-                int sy = startCard.y;
-
+                int targetX = (availW - CARD_W) / 2, targetY = (availH - CARD_H) / 2;
                 long afterExplode = Math.max(0, animElapsed - EXPLODE_MS);
-                float moveT = clamp01(afterExplode / (float) SEL_MOVE_MS);
-                float fadeT = clamp01((afterExplode - SEL_MOVE_MS - SEL_HOLD_MS) / (float) SEL_FADE_MS);
+                float moveT = PickAnimationEngine.clamp01(afterExplode / (float) SEL_MOVE_MS);
+                float fadeT = PickAnimationEngine.clamp01((afterExplode - SEL_MOVE_MS - SEL_HOLD_MS) / (float) SEL_FADE_MS);
+                float easeMove = (float) PickAnimationEngine.cubicOut(moveT);
 
-                float easeMove = (float) cubicOut(moveT);
-                int curX = Math.round(lerp(sx, targetX, easeMove));
-                int curY = Math.round(lerp(sy, targetY, easeMove));
-
+                int curX = Math.round(PickAnimationEngine.lerp(startCard.x, targetX, easeMove));
+                int curY = Math.round(PickAnimationEngine.lerp(startCard.y, targetY, easeMove));
                 float alpha = (fadeT <= 0f) ? 1f : (1f - fadeT);
                 float scale = 1.0f + 0.08f * easeMove;
-                float glow = 0.6f * Math.max(0f, easeMove);
+                float glowIn = Math.max(0f, easeMove);
 
                 Rectangle lifted = new Rectangle(curX, curY, CARD_W, CARD_H);
-                drawLightBeam(g, lifted, Math.max(0.2f, easeMove) * alpha);
-                drawCard(g, lifted, base, false, alpha, scale, glow * alpha, true);
+                renderer.drawCard(g, lifted, local.get(selectedIndex), false, alpha, scale,
+                        glowIn, true, useGoldBgThisPresentation ? cardBgGold : cardBgDefault,
+                        itemManager, repo, this::getAccent);
             }
         }
 
+        // Finish animation
         if (animating && animElapsed >= ANIM_TOTAL) {
             if (!pickSent && onPick != null && selectedIndex >= 0 && selectedIndex < local.size()) {
                 pickSent = true;
@@ -592,24 +478,35 @@ public class ChoiceManOverlay extends Overlay {
             return new Dimension(availW, ROOT_Y + 24 + TITLE_GAP_Y + CARD_H + 16);
         }
 
+        // minimize pill
         int contentHeight = rows * CARD_H + (rows - 1) * CARD_GAP - Math.max(0, rows - 1) * LIFT_PER_ROW;
-        int totalW = availW;
-        int totalH = ROOT_Y + (24 + TITLE_GAP_Y) + contentHeight + 16;
+        int totalW = availW, totalH = rowY + contentHeight + 16;
 
-        int minX = totalW - MIN_BTN_W - 8;
-        int minY = ROOT_Y - 2;
-        minimizeBounds = new Rectangle(minX, minY, MIN_BTN_W, MIN_BTN_H);
-        renderMinimizePill(g, minimizeBounds, "Minimize", !animating && hoverMinimize);
+        Rectangle pillBounds = renderer.drawMinimizePill(g, totalW, TITLE_TOP_Y, MIN_BTN_W, MIN_BTN_H,
+                "Minimize", !animating && hoverMinimize, this::getAccent);
+        minimizeBounds = pillBounds;
 
         return new Dimension(totalW, totalH);
     }
 
+    // Helpers
+
+    /**
+     * @param idx card index
+     * @return true when a card has fully completed its reveal animation and is eligible for hover/select.
+     */
     private boolean isCardFullyRevealed(int idx) {
         boolean[] arr = fullyRevealed;
         return idx >= 0 && arr != null && idx < arr.length && arr[idx];
     }
 
-    private int indexAt(Point localPoint) {
+    /**
+     * Hit test helper for card rectangles in overlay-local space.
+     *
+     * @param p overlay-local point
+     * @return the index of the card under the point, or -1 if none.
+     */
+    private int indexAt(Point p) {
         List<Rectangle> snapshot;
         synchronized (boundsLock) {
             if (cardBounds.isEmpty()) return -1;
@@ -617,366 +514,18 @@ public class ChoiceManOverlay extends Overlay {
         }
         for (int i = 0; i < snapshot.size(); i++) {
             Rectangle r = snapshot.get(i);
-            if (r != null && r.contains(localPoint)) return i;
+            if (r != null && r.contains(p)) return i;
         }
         return -1;
     }
 
-    private Dimension renderRestorePill(Graphics2D g, int viewportW) {
-        final int w = RESTORE_W;
-        final int h = RESTORE_H;
-        final int x = Math.max(8, (viewportW - w) / 2);
-        final int y = ROOT_Y;
-
-        restoreBounds = new Rectangle(x, y, w, h);
-
-        g.setColor(new Color(26, 26, 26, 232));
-        g.fillRoundRect(x, y, w, h, 12, 12);
-
-        Color acc = getAccent();
-        if (hoverRestore) {
-            acc = new Color(acc.getRed(), acc.getGreen(), acc.getBlue(),
-                    Math.min(255, (int) (acc.getAlpha() * 1.1)));
-        }
-        Stroke s = g.getStroke();
-        g.setStroke(new BasicStroke(2.0f));
-        g.setColor(acc);
-        g.drawRoundRect(x, y, w, h, 12, 12);
-        g.setStroke(s);
-
-        g.setFont(g.getFont().deriveFont(Font.BOLD, 13f));
-        g.setColor(Color.WHITE);
-        final int count = Math.max(0, pendingCount);
-        String label = (count > 0) ? ("Show choices (" + count + ")") : "Show choices";
-        drawCentered(g, label, x, y + ((h - g.getFontMetrics().getHeight()) / 2) + g.getFontMetrics().getAscent(), w);
-
-        return new Dimension(viewportW, h + ROOT_Y + 8);
-    }
-
-    private void renderMinimizePill(Graphics2D g, Rectangle r, String label, boolean hovered) {
-        g.setColor(new Color(26, 26, 26, 220));
-        g.fillRoundRect(r.x, r.y, r.width, r.height, 10, 10);
-
-        Color acc = getAccent();
-        if (hovered) {
-            acc = new Color(acc.getRed(), acc.getGreen(), acc.getBlue(),
-                    Math.min(255, (int) (acc.getAlpha() * 1.1)));
-        }
-        Stroke s = g.getStroke();
-        g.setStroke(new BasicStroke(1.8f));
-        g.setColor(acc);
-        g.drawRoundRect(r.x, r.y, r.width, r.height, 10, 10);
-        g.setStroke(s);
-
-        g.setFont(g.getFont().deriveFont(Font.BOLD, 12f));
-        g.setColor(Color.WHITE);
-        drawCentered(g, label, r.x, r.y + ((r.height - g.getFontMetrics().getHeight()) / 2) + g.getFontMetrics().getAscent(), r.width);
-    }
-
+    /**
+     * Resolve the accent color for UI elements. Falls back to a warm yellow when config is missing.
+     *
+     * @return non-null ARGB color used for pills, glows, and accents.
+     */
     private Color getAccent() {
         return (config != null && config.accentColor() != null)
-                ? config.accentColor()
-                : new Color(255, 204, 0, 255);
-    }
-
-    private void drawCard(Graphics2D g, Rectangle card, String base, boolean hovered,
-                          float alpha, float scale, float glow, boolean emphasize) {
-        if (card == null) return;
-
-        Composite oldComp = g.getComposite();
-        AffineTransform oldTx = g.getTransform();
-
-        int cx = card.x + card.width / 2;
-        int cy = card.y + card.height / 2;
-
-        g.translate(cx, cy);
-        g.scale(scale, scale);
-        g.translate(-card.width / 2.0, -card.height / 2.0);
-
-        g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, clamp01(alpha)));
-
-        final BufferedImage bg = useGoldBgThisPresentation && cardBgGold != null ? cardBgGold : cardBgDefault;
-        if (bg != null) {
-            g.setColor(new Color(0, 0, 0, Math.min(180, (int) (120 * alpha))));
-            g.fillRoundRect(2, 4, card.width, card.height, 16, 16);
-            g.drawImage(bg, 0, 0, card.width, card.height, null);
-        } else {
-            g.setColor(new Color(26, 26, 26, Math.min(255, (int) (232 * alpha))));
-            g.fillRoundRect(0, 0, card.width, card.height, 14, 14);
-            g.setColor(new Color(96, 96, 96, Math.min(255, (int) (220 * alpha))));
-            g.drawRoundRect(0, 0, card.width, card.height, 14, 14);
-        }
-
-        if (hovered || emphasize) {
-            Stroke s = g.getStroke();
-            g.setStroke(new BasicStroke(1.6f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-            Color acc = getAccent();
-            int a = hovered ? acc.getAlpha() : Math.min(255, (int) (acc.getAlpha() * (0.6f + glow)));
-            g.setColor(new Color(acc.getRed(), acc.getGreen(), acc.getBlue(), a));
-            g.drawRoundRect(1, 1, card.width - 2, card.height - 2, 12, 12);
-            g.setStroke(s);
-        }
-
-        Font nameFont = g.getFont().deriveFont(Font.BOLD, NAME_FONT_SIZE);
-        FontMetrics nfm = g.getFontMetrics(nameFont);
-
-        int maxTextWidth = card.width - (NAME_SIDE_PADDING * 2);
-        List<String> lines = wrapText(base, nfm, maxTextWidth, NAME_MAX_LINES);
-
-        final int spacing = 6;
-        final int lineH = nfm.getHeight() + NAME_LINE_SPACING;
-        final int textBlockH = lines.size() * lineH - NAME_LINE_SPACING;
-
-        int iconW = ICON_W;
-        int iconH = ICON_H;
-
-        int anyId = repo != null ? repo.getIdsForBase(base).stream().findFirst().orElse(0) : 0;
-        BufferedImage img = (itemManager != null && anyId > 0) ? itemManager.getImage(anyId) : null;
-
-        if (img != null) {
-            int srcW = Math.max(1, img.getWidth());
-            int srcH = Math.max(1, img.getHeight());
-
-            int maxIconW = card.width - (NAME_SIDE_PADDING * 2);
-            int scaleInt = 1;
-            if (srcW * 2 <= maxIconW) {
-                scaleInt = 2;
-            }
-            iconW = srcW * scaleInt;
-            iconH = srcH * scaleInt;
-        }
-
-        final int contentH = iconH + spacing + textBlockH;
-        final int topY = (card.height - contentH) / 2;
-
-        if (img != null) {
-            int ix = (card.width - iconW) / 2;
-            int iy = topY;
-
-            Object prevInterp = g.getRenderingHint(RenderingHints.KEY_INTERPOLATION);
-            try {
-                // Integer multiple → nearest-neighbor (crisp). Otherwise, bicubic as a safe fallback.
-                boolean integerMultiple = (iconW % Math.max(1, img.getWidth()) == 0) &&
-                        (iconH % Math.max(1, img.getHeight()) == 0);
-                g.setRenderingHint(
-                        RenderingHints.KEY_INTERPOLATION,
-                        integerMultiple
-                                ? RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR
-                                : RenderingHints.VALUE_INTERPOLATION_BICUBIC
-                );
-                g.drawImage(img, ix, iy, iconW, iconH, null);
-            } finally {
-                if (prevInterp != null) {
-                    try { g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, prevInterp); } catch (IllegalArgumentException ignored) {}
-                }
-            }
-        }
-
-        g.setFont(nameFont);
-        g.setColor(new Color(255, 255, 255, Math.min(255, (int) (255 * alpha))));
-        int baseline = topY + iconH + spacing + nfm.getAscent();
-        for (String line : lines) {
-            drawCentered(g, line, 0, baseline, card.width);
-            baseline += lineH;
-        }
-
-        g.setTransform(oldTx);
-        g.setComposite(oldComp);
-    }
-
-    private void drawLightBeam(Graphics2D g, Rectangle card, float t) {
-        int pad = 12;
-        int beamX = card.x - pad;
-        int beamY = card.y - 18;
-        int beamW = card.width + pad * 2;
-        int beamH = card.height + 48;
-
-        int topAlpha = (int) (200 * t);
-        GradientPaint gp = new GradientPaint(
-                beamX + beamW / 2f, beamY,
-                new Color(255, 245, 180, clamp255(topAlpha)),
-                beamX + beamW / 2f, beamY + beamH,
-                new Color(255, 245, 180, 0)
-        );
-        Paint old = g.getPaint();
-        g.setPaint(gp);
-        g.fillRoundRect(beamX, beamY, beamW, beamH, 18, 18);
-        g.setPaint(old);
-
-        g.setColor(new Color(255, 230, 120, clamp255((int) (120 * t))));
-        g.drawRoundRect(beamX, beamY, beamW, beamH, 18, 18);
-    }
-
-    private void seedParticles(List<Rectangle> bounds, int selIdx) {
-        particles.clear();
-        ThreadLocalRandom rnd = ThreadLocalRandom.current();
-
-        for (int i = 0; i < bounds.size(); i++) {
-            if (i == selIdx) continue;
-            Rectangle r = bounds.get(i);
-            if (r == null) continue;
-            int cx = r.x + r.width / 2;
-            int cy = r.y + r.height / 2;
-
-            int count = 26 + rnd.nextInt(12);
-            List<Particle> list = new ArrayList<>(count);
-            for (int p = 0; p < count; p++) {
-                double angle = rnd.nextDouble(0, Math.PI * 2);
-                double speed = 90 + rnd.nextDouble(90);
-                float vx = (float) (Math.cos(angle) * speed);
-                float vy = (float) (Math.sin(angle) * speed - 40);
-
-                float size = 2.0f + rnd.nextFloat() * 2.2f;
-                int rshift = rnd.nextInt(30);
-                int gshift = rnd.nextInt(20);
-                Color c = new Color(
-                        clamp255(255),
-                        clamp255(200 + gshift),
-                        clamp255(40 + rshift),
-                        255
-                );
-                list.add(new Particle(cx, cy, vx, vy, size, c));
-            }
-            particles.put(i, list);
-        }
-    }
-
-    private void drawParticles(Graphics2D g, List<Particle> list, float norm) {
-        float grav = 120f;
-
-        Composite old = g.getComposite();
-        for (Particle p : list) {
-            float t = clamp01(norm);
-            float x = p.x0 + p.vx * t * (EXPLODE_MS / 1000f);
-            float y = p.y0 + (p.vy * t * (EXPLODE_MS / 1000f)) + 0.5f * grav * t * t;
-
-            int alpha = clamp255((int) (255 * (1.0f - t)));
-            if (alpha <= 0) continue;
-
-            g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, alpha / 255f));
-            g.setColor(new Color(p.color.getRed(), p.color.getGreen(), p.color.getBlue(), alpha));
-
-            float size = Math.max(0.5f, p.size * (1.0f - t));
-            int s = Math.max(1, Math.round(size));
-            g.fillOval(Math.round(x) - s / 2, Math.round(y) - s / 2, s, s);
-        }
-        g.setComposite(old);
-    }
-
-    private static final class Particle {
-        final float x0, y0;
-        final float vx, vy;
-        final float size;
-        final Color color;
-
-        Particle(float x0, float y0, float vx, float vy, float size, Color color) {
-            this.x0 = x0;
-            this.y0 = y0;
-            this.vx = vx;
-            this.vy = vy;
-            this.size = size;
-            this.color = color;
-        }
-    }
-
-    private static final class Sfx {
-        private final List<Clip> pool = new ArrayList<>();
-        private final byte[] wavBytes;
-        private final int maxPool;
-        private volatile float volumeLinear = 1f;
-
-        private Sfx(byte[] wavBytes, int maxPool) {
-            this.wavBytes = wavBytes;
-            this.maxPool = Math.max(1, maxPool);
-        }
-
-        static Sfx load(String resourcePath, int maxPool) throws IOException, UnsupportedAudioFileException, LineUnavailableException {
-            try (InputStream in = ChoiceManOverlay.class.getResourceAsStream(resourcePath)) {
-                if (in == null) throw new IOException("Missing SFX: " + resourcePath);
-                byte[] bytes = in.readAllBytes();
-
-                Sfx sfx = new Sfx(bytes, maxPool);
-                Clip first = sfx.makeClip();
-                sfx.applyVolume(first);
-                synchronized (sfx.pool) {
-                    sfx.pool.add(first);
-                }
-                return sfx;
-            }
-        }
-
-        private Clip makeClip() throws UnsupportedAudioFileException, IOException, LineUnavailableException {
-            try (AudioInputStream ais0 = AudioSystem.getAudioInputStream(new ByteArrayInputStream(wavBytes))) {
-                AudioFormat base = ais0.getFormat();
-                AudioInputStream use = ais0;
-                if (base.getEncoding() != AudioFormat.Encoding.PCM_SIGNED) {
-                    AudioFormat pcm = new AudioFormat(
-                            AudioFormat.Encoding.PCM_SIGNED,
-                            base.getSampleRate(),
-                            16,
-                            base.getChannels(),
-                            base.getChannels() * 2,
-                            base.getSampleRate(),
-                            false
-                    );
-                    use = AudioSystem.getAudioInputStream(pcm, ais0);
-                }
-                Clip c = AudioSystem.getClip();
-                c.open(use);
-                return c;
-            }
-        }
-
-        void setVolume(float linear01) {
-            volumeLinear = clamp01(linear01);
-            synchronized (pool) {
-                for (Clip c : pool) applyVolume(c);
-            }
-        }
-
-        private void applyVolume(Clip c) {
-            try {
-                FloatControl gain = (FloatControl) c.getControl(FloatControl.Type.MASTER_GAIN);
-                float db = (volumeLinear <= 0f) ? gain.getMinimum()
-                        : (float) (20.0 * Math.log10(volumeLinear));
-                db = Math.max(gain.getMinimum(), Math.min(gain.getMaximum(), db));
-                gain.setValue(db);
-                return;
-            } catch (IllegalArgumentException ignored) {
-            }
-            try {
-                FloatControl vol = (FloatControl) c.getControl(FloatControl.Type.VOLUME);
-                float v = Math.max(vol.getMinimum(), Math.min(vol.getMaximum(), volumeLinear));
-                vol.setValue(v);
-            } catch (IllegalArgumentException ignored) {
-            }
-        }
-
-        void play() {
-            try {
-                Clip chosen = null;
-                synchronized (pool) {
-                    for (Clip c : pool) {
-                        if (!c.isRunning()) {
-                            chosen = c;
-                            break;
-                        }
-                    }
-                    if (chosen == null && pool.size() < maxPool) {
-                        chosen = makeClip();
-                        applyVolume(chosen);
-                        pool.add(chosen);
-                    }
-                }
-                if (chosen != null) {
-                    chosen.stop();
-                    chosen.flush();
-                    chosen.setFramePosition(0);
-                    chosen.start();
-                }
-            } catch (Exception ignored) {
-                // never break rendering on SFX problems
-            }
-        }
+                ? config.accentColor() : new Color(255, 204, 0, 255);
     }
 }

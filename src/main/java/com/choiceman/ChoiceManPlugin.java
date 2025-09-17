@@ -97,17 +97,16 @@ public class ChoiceManPlugin extends Plugin {
     @Inject
     private UnlocksWidgetController unlocksWidgetController;
     @Inject
-    private MusicOpenButton musicOpenButton;
-    @Inject
-    private TabListener tabListener;
-    @Inject
     private ItemsRepository itemsRepo;
     @Inject
     private ChoiceManUnlocks unlocks;
+    @Inject
+    private UnlocksTabUI unlocksTabUI;
 
     private ChoiceManPanel choiceManPanel;
     private NavigationButton navButton;
     private MouseListener overlayMouse;
+    private volatile Integer forcedOfferCount = null;
 
     // client-thread-guarded state (visibility via volatile)
     private volatile boolean featuresActive = false;
@@ -214,6 +213,9 @@ public class ChoiceManPlugin extends Plugin {
             // Advance the queue
             int remaining = pendingChoices.decrementAndGet();
             choiceManOverlay.setPendingCount(Math.max(0, remaining));
+            if (remaining <= 0) {
+                forcedOfferCount = null; // return to normal (level-based) behavior
+            }
             if (remaining > 0) {
                 clientThread.invoke(this::startChoiceIfNeeded);
             }
@@ -231,9 +233,7 @@ public class ChoiceManPlugin extends Plugin {
 
         actionHandler.startUp();
 
-        eventBus.register(musicOpenButton);
-        musicOpenButton.onStart();
-        eventBus.register(tabListener);
+        unlocksTabUI.startUp();
 
         choiceManPanel = new ChoiceManPanel(itemsRepo, unlocks, itemManager);
         BufferedImage icon = ImageUtil.loadImageResource(getClass(), "/net/runelite/client/plugins/choiceman/icon.png");
@@ -270,19 +270,9 @@ public class ChoiceManPlugin extends Plugin {
             log.debug("Unregister dimmer failed", ex);
         }
         try {
-            musicOpenButton.onStop();
+            unlocksTabUI.shutDown();
         } catch (Exception ex) {
-            log.debug("MusicOpenButton stop failed", ex);
-        }
-        try {
-            eventBus.unregister(musicOpenButton);
-        } catch (Exception ex) {
-            log.debug("Unregister musicOpenButton failed", ex);
-        }
-        try {
-            eventBus.unregister(tabListener);
-        } catch (Exception ex) {
-            log.debug("Unregister tabListener failed", ex);
+            log.debug("UnlocksTabUI shutdown failed", ex);
         }
 
         try {
@@ -425,7 +415,9 @@ public class ChoiceManPlugin extends Plugin {
             return;
         }
 
-        int offerCount = choiceCountForTotal(computeTotalLevel());
+        int offerCount = (forcedOfferCount != null)
+                ? Math.max(1, Math.min(5, forcedOfferCount))
+                : choiceCountForTotal(computeTotalLevel());
         Collections.shuffle(pool, ThreadLocalRandom.current());
         List<String> offer = pool.stream().limit(Math.min(offerCount, pool.size())).collect(Collectors.toList());
 
@@ -463,52 +455,58 @@ public class ChoiceManPlugin extends Plugin {
 
     @Subscribe
     public void onCommandExecuted(CommandExecuted e) {
-        if (!featuresActive) return;                  // only when plugin is active
+        if (!featuresActive) return;
         if (!"roll".equalsIgnoreCase(e.getCommand())) return;
 
-        // Expected forms:
-        // ::roll 5 unlocks
-        // ::roll 3
-        // ::roll unlocks 4
-        int requested = -1;
+        Integer showCount = null;
+        Integer queuedCount = null;
+
         for (String arg : e.getArguments()) {
             try {
                 int v = Integer.parseInt(arg.trim());
-                if (v >= 1 && v <= 5) {
-                    requested = v;
+                if (showCount == null) {
+                    showCount = v;
+                } else if (queuedCount == null) {
+                    queuedCount = v;
                     break;
                 }
-            } catch (NumberFormatException ignore) {
+            } catch (NumberFormatException ignored) {
             }
         }
-        if (requested == -1) {
+
+        if (showCount == null || showCount < 1 || showCount > 5) {
             addGameMessage(black("[") + blue("Choice Man") + black("] ")
-                    + "Usage: ::roll " + red("N") + " unlocks  (N = 1–5).");
+                    + "Usage: ::roll " + red("N") + " unlocks " + black("[") + red("Q") + black("] ")
+                    + "(N = 1–5 cards per pick, optional Q = number of picks to queue).");
             return;
         }
 
-        // If overlay is already active, don't collide with an in-progress pick
-        if (choiceManOverlay.isActive()) {
-            addGameMessage(black("[") + blue("Choice Man") + black("] ")
-                    + "A roll is already in progress.");
+        int q = (queuedCount == null ? 1 : Math.max(1, Math.min(50, queuedCount))); // safety cap
+
+        // Build pool to ensure there is at least something to show
+        List<String> allLocked = itemsRepo.getAllBasesStillLocked(unlocks);
+        if (allLocked.isEmpty()) {
+            addGameMessage(black("[") + blue("Choice Man") + black("] ") + "No locked items remain to roll.");
             return;
         }
 
-        // Build an offer of N random still-locked bases
-        List<String> pool = itemsRepo.getAllBasesStillLocked(unlocks);
-        if (pool.isEmpty()) {
+        // Force the presentation size for this manual queue
+        forcedOfferCount = showCount;
+
+        // Add Q presentations to the standard queue and reflect in minimized pill
+        int totalQueued = pendingChoices.addAndGet(q);
+        choiceManOverlay.setPendingCount(Math.max(0, totalQueued));
+
+        if (!choiceManOverlay.isActive()) {
+            startChoiceIfNeeded(); // kick off immediately if idle
             addGameMessage(black("[") + blue("Choice Man") + black("] ")
-                    + "No locked items remain to roll.");
-            return;
+                    + "Rolling " + red(String.valueOf(q)) + " pick" + (q == 1 ? "" : "s")
+                    + " with " + red(String.valueOf(showCount)) + " choices each.");
+        } else {
+            addGameMessage(black("[") + blue("Choice Man") + black("] ")
+                    + "Queued " + red(String.valueOf(q)) + " more pick" + (q == 1 ? "" : "s")
+                    + " (" + red(String.valueOf(showCount)) + " choices each).");
         }
-
-        Collections.shuffle(pool, ThreadLocalRandom.current());
-        List<String> offer = pool.stream()
-                .limit(Math.min(requested, pool.size()))
-                .collect(Collectors.toList());
-
-        // Trigger a normal (non-milestone) presentation with exactly N choices
-        choiceManOverlay.presentChoicesSequential(offer, /*milestone=*/false);
     }
 
     /**
