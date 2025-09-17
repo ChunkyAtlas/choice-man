@@ -17,14 +17,7 @@ import javax.inject.Singleton;
  */
 @Singleton
 public final class SpriteOverrideManager implements SpriteOverride {
-    /**
-     * Target widget sprite id to override.
-     */
     private static final int SPRITE_ID = 910;
-
-    /**
-     * PNG resource placed on the classpath to serve as the replacement sprite.
-     */
     private static final String RESOURCE = "/com/choiceman/ui/unlocks.png";
 
     private final SpriteManager spriteManager;
@@ -42,24 +35,29 @@ public final class SpriteOverrideManager implements SpriteOverride {
         this.clientThread = clientThread;
     }
 
-    /**
-     * Registers this override and refreshes the widget sprite cache on the client thread.
-     * Safe to call repeatedly; SpriteManager handles idempotency for duplicates.
-     */
     public void register() {
+        spriteManager.addSpriteOverrides(new SpriteOverride[]{this});
         clientThread.invokeLater(() -> {
-            spriteManager.addSpriteOverrides(new SpriteOverride[]{this});
+            try (var in = SpriteOverrideManager.class.getResourceAsStream(RESOURCE)) {
+                if (in != null) {
+                    var img = javax.imageio.ImageIO.read(in);
+                    if (img != null) {
+                        var pixels = net.runelite.client.util.ImageUtil.getImageSpritePixels(img, client);
+                        client.getSpriteOverrides().put(SPRITE_ID, pixels);
+                    }
+                } else {
+                    System.out.println("[ChoiceMan] unlocks.png not found at " + RESOURCE);
+                }
+            } catch (Exception ignored) { /* noop */ }
+
             client.getWidgetSpriteCache().reset();
         });
     }
 
-    /**
-     * Unregisters this override and refreshes the widget sprite cache on the client thread.
-     * Safe to call even if the override is not currently registered.
-     */
     public void unregister() {
+        spriteManager.removeSpriteOverrides(new SpriteOverride[]{this});
         clientThread.invokeLater(() -> {
-            spriteManager.removeSpriteOverrides(new SpriteOverride[]{this});
+            client.getSpriteOverrides().remove(SPRITE_ID); // clear any direct override too
             client.getWidgetSpriteCache().reset();
         });
     }

@@ -14,7 +14,6 @@ import java.awt.Color;
 @ConfigGroup("choiceman")
 public interface ChoiceManConfig extends Config
 {
-    // ---------- Item dimmer ----------
     @ConfigItem(
             keyName = "dimLocked",
             name = "Dim locked items",
@@ -31,7 +30,6 @@ public interface ChoiceManConfig extends Config
     )
     default int dimOpacity() { return 120; }
 
-    // ---------- GE restrictions ----------
     @ConfigItem(
             keyName = "geRestrictions",
             name = "Restrict GE to unlocked & obtained",
@@ -40,7 +38,6 @@ public interface ChoiceManConfig extends Config
     )
     default boolean geRestrictions() { return true; }
 
-    // ---------- Overlay visuals ----------
     @ConfigItem(
             keyName = "choiceRevealMs",
             name = "Choice reveal animation (ms)",

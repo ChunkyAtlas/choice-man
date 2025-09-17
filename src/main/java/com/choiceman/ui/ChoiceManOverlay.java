@@ -121,6 +121,7 @@ public class ChoiceManOverlay extends Overlay {
     private volatile List<String> choices;
     private volatile Instant presentedAt;
     private volatile int hoveredIndex = -1, lastHoverIndex = -1;
+    @Getter
     private volatile boolean minimized = false;
     private volatile int pendingCount = 0; // number of queued picks; shown in the restore pill
     // Hit-test rectangles for controls
@@ -173,15 +174,12 @@ public class ChoiceManOverlay extends Overlay {
             if (lp == null) return e;
 
             if (minimized && restoreBounds != null && restoreBounds.contains(lp)) {
-                minimized = false;
-                presentedAt = Instant.now();
+                setMinimized(false);
                 e.consume();
                 return e;
             }
             if (!minimized && minimizeBounds != null && minimizeBounds.contains(lp)) {
-                minimized = true;
-                hoveredIndex = -1;
-                lastHoverIndex = -1;
+                setMinimized(true);
                 e.consume();
                 return e;
             }
@@ -217,6 +215,31 @@ public class ChoiceManOverlay extends Overlay {
         setLayer(OverlayLayer.ABOVE_WIDGETS);
         this.renderer = new CardRenderer(this::getAccent);
         this.anim = new PickAnimationEngine();
+    }
+
+    /**
+     * Programmatically minimize or restore the overlay.
+     */
+    public void setMinimized(boolean value) {
+        if (!active || choices == null || choices.isEmpty()) return;
+        if (minimized == value) return;
+        if (value) {
+            minimized = true;
+            hoveredIndex = -1;
+            lastHoverIndex = -1;
+            return;
+        }
+        minimized = false;
+        presentedAt = Instant.now();
+        popupPlayed.clear();
+        fullyRevealed = (choices != null) ? new boolean[choices.size()] : new boolean[0];
+        hoveredIndex = -1;
+        lastHoverIndex = -1;
+        animating = false;
+        selectedIndex = -1;
+        animStart = null;
+        pickSent = false;
+        anim.resetParticles();
     }
 
     /**

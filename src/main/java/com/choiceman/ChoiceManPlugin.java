@@ -102,6 +102,8 @@ public class ChoiceManPlugin extends Plugin {
     private ChoiceManUnlocks unlocks;
     @Inject
     private UnlocksTabUI unlocksTabUI;
+    @Inject
+    private CombatMinimizer combatMinimizer;
 
     private ChoiceManPanel choiceManPanel;
     private NavigationButton navButton;
@@ -230,9 +232,8 @@ public class ChoiceManPlugin extends Plugin {
         itemDimmerController.setEnabled(config.dimLocked());
         itemDimmerController.setDimOpacity(config.dimOpacity());
         eventBus.register(itemDimmerController);
-
+        eventBus.register(combatMinimizer);
         actionHandler.startUp();
-
         unlocksTabUI.startUp();
 
         choiceManPanel = new ChoiceManPanel(itemsRepo, unlocks, itemManager);
@@ -268,6 +269,11 @@ public class ChoiceManPlugin extends Plugin {
             eventBus.unregister(itemDimmerController);
         } catch (Exception ex) {
             log.debug("Unregister dimmer failed", ex);
+        }
+        try {
+            eventBus.unregister(combatMinimizer);
+        } catch (Exception ex) {
+            log.debug("CombatMinimizer shutdown failed", ex);
         }
         try {
             unlocksTabUI.shutDown();
