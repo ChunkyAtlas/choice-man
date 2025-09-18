@@ -3245,15 +3245,9 @@
     ]
   },
   {
-    "name": "Black mask",
-    "ids": [
-      8921
-    ]
-  },
-  {
     "name": "Black mask (10)",
     "ids": [
-      8901
+      8901, 8921
     ]
   },
   {
@@ -3649,25 +3643,7 @@
   {
     "name": "Blighted overload",
     "ids": [
-      29640
-    ]
-  },
-  {
-    "name": "Blighted overload",
-    "ids": [
-      29637
-    ]
-  },
-  {
-    "name": "Blighted overload",
-    "ids": [
-      29634
-    ]
-  },
-  {
-    "name": "Blighted overload",
-    "ids": [
-      29631
+      29631, 29634, 29637, 29640
     ]
   },
   {
@@ -3679,7 +3655,7 @@
   {
     "name": "Blighted super restore",
     "ids": [
-      24598
+      24598, 24601, 24603, 24605
     ]
   },
   {
@@ -10733,7 +10709,7 @@
   {
     "name": "Heavy ballista",
     "ids": [
-      19481
+      19481, 19598, 19607
     ]
   },
   {
@@ -11071,18 +11047,6 @@
     "name": "Impling jar",
     "ids": [
       11260
-    ]
-  },
-  {
-    "name": "Incomplete heavy ballista",
-    "ids": [
-      19598
-    ]
-  },
-  {
-    "name": "Incomplete light ballista",
-    "ids": [
-      19595
     ]
   },
   {
@@ -12384,7 +12348,7 @@
   {
     "name": "Light ballista",
     "ids": [
-      19478
+      19478, 19595, 19604
     ]
   },
   {
@@ -16165,12 +16129,6 @@
     ]
   },
   {
-    "name": "Quetzin",
-    "ids": [
-      28962
-    ]
-  },
-  {
     "name": "Rabbit foot",
     "ids": [
       10134
@@ -16913,30 +16871,6 @@
     "name": "Relicym's mix",
     "ids": [
       11439, 11437
-    ]
-  },
-  {
-    "name": "Remnant of akkha",
-    "ids": [
-      27377
-    ]
-  },
-  {
-    "name": "Remnant of ba-ba",
-    "ids": [
-      27378
-    ]
-  },
-  {
-    "name": "Remnant of kephri",
-    "ids": [
-      27379
-    ]
-  },
-  {
-    "name": "Remnant of zebak",
-    "ids": [
-      27380
     ]
   },
   {
@@ -21855,18 +21789,6 @@
     "name": "Unstrung emblem",
     "ids": [
       1720
-    ]
-  },
-  {
-    "name": "Unstrung heavy ballista",
-    "ids": [
-      19607
-    ]
-  },
-  {
-    "name": "Unstrung light ballista",
-    "ids": [
-      19604
     ]
   },
   {
