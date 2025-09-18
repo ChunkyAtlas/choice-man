@@ -4277,18 +4277,6 @@
     ]
   },
   {
-    "name": "Bounty supply crate (anglerfish)",
-    "ids": [
-      30619
-    ]
-  },
-  {
-    "name": "Bounty supply crate (manta ray)",
-    "ids": [
-      30616
-    ]
-  },
-  {
     "name": "Bow of faerdhinen",
     "ids": [
       25865
@@ -5071,7 +5059,7 @@
   {
     "name": "Cake",
     "ids": [
-      1891
+      1891, 1893, 1895
     ]
   },
   {
@@ -5503,7 +5491,7 @@
   {
     "name": "Chocolate cake",
     "ids": [
-      1897
+      1897, 1899, 1901
     ]
   },
   {
@@ -11038,36 +11026,6 @@
     ]
   },
   {
-    "name": "Icthlarin's shroud (tier 1)",
-    "ids": [
-      27257
-    ]
-  },
-  {
-    "name": "Icthlarin's shroud (tier 2)",
-    "ids": [
-      27259
-    ]
-  },
-  {
-    "name": "Icthlarin's shroud (tier 3)",
-    "ids": [
-      27261
-    ]
-  },
-  {
-    "name": "Icthlarin's shroud (tier 4)",
-    "ids": [
-      27263
-    ]
-  },
-  {
-    "name": "Icthlarin's shroud (tier 5)",
-    "ids": [
-      27265
-    ]
-  },
-  {
     "name": "Icy basalt",
     "ids": [
       22599
@@ -14795,6 +14753,12 @@
     ]
   },
   {
+    "name": "Old school bond",
+    "ids": [
+      13190
+    ]
+  },
+  {
     "name": "Old writing",
     "ids": [
       21680
@@ -16892,24 +16856,6 @@
     ]
   },
   {
-    "name": "Redundant hat",
-    "ids": [
-      21826
-    ]
-  },
-  {
-    "name": "Redundant leggings",
-    "ids": [
-      21832
-    ]
-  },
-  {
-    "name": "Redundant top",
-    "ids": [
-      21829
-    ]
-  },
-  {
     "name": "Redwood bird house",
     "ids": [
       22204
@@ -18885,36 +18831,6 @@
     "name": "Sinew",
     "ids": [
       9436
-    ]
-  },
-  {
-    "name": "Sinhaza shroud tier 1",
-    "ids": [
-      22494
-    ]
-  },
-  {
-    "name": "Sinhaza shroud tier 2",
-    "ids": [
-      22496
-    ]
-  },
-  {
-    "name": "Sinhaza shroud tier 3",
-    "ids": [
-      22498
-    ]
-  },
-  {
-    "name": "Sinhaza shroud tier 4",
-    "ids": [
-      22500
-    ]
-  },
-  {
-    "name": "Sinhaza shroud tier 5",
-    "ids": [
-      22502
     ]
   },
   {
@@ -22074,42 +21990,6 @@
     ]
   },
   {
-    "name": "Victor's cape (1)",
-    "ids": [
-      24207
-    ]
-  },
-  {
-    "name": "Victor's cape (10)",
-    "ids": [
-      24209
-    ]
-  },
-  {
-    "name": "Victor's cape (100)",
-    "ids": [
-      24213
-    ]
-  },
-  {
-    "name": "Victor's cape (1000)",
-    "ids": [
-      24520
-    ]
-  },
-  {
-    "name": "Victor's cape (50)",
-    "ids": [
-      24211
-    ]
-  },
-  {
-    "name": "Victor's cape (500)",
-    "ids": [
-      24215
-    ]
-  },
-  {
     "name": "Viggora's chainmace (u)",
     "ids": [
       22542
@@ -22454,13 +22334,7 @@
   {
     "name": "Waterskin",
     "ids": [
-      1831
-    ]
-  },
-  {
-    "name": "Waterskin",
-    "ids": [
-      1823
+      1831, 1829, 1827, 1825, 1823
     ]
   },
   {
@@ -23073,30 +22947,6 @@
     "name": "Wyvern visage",
     "ids": [
       21637
-    ]
-  },
-  {
-    "name": "Xeric's champion",
-    "ids": [
-      22396
-    ]
-  },
-  {
-    "name": "Xeric's general",
-    "ids": [
-      22394
-    ]
-  },
-  {
-    "name": "Xeric's guard",
-    "ids": [
-      22388
-    ]
-  },
-  {
-    "name": "Xeric's sentinel",
-    "ids": [
-      22392
     ]
   },
   {
