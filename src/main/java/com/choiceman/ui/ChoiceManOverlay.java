@@ -512,7 +512,7 @@ public class ChoiceManOverlay extends Overlay {
         int totalW = availW, totalH = rowY + contentHeight + 16;
 
         final int pillX = 8;
-        final int pillY = TITLE_TOP_Y - 2;
+        final int pillY = TITLE_TOP_Y + 15;
         minimizeBounds = renderer.drawMinimizePillAt(
                 g, pillX, pillY, MIN_BTN_W, MIN_BTN_H,
                 "Minimize", !animating && hoverMinimize, this::getAccent);
