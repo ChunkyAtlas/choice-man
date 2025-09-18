@@ -3,7 +3,6 @@ package com.choiceman;
 import com.choiceman.ui.ChoiceManOverlay;
 import net.runelite.api.Client;
 import net.runelite.api.Player;
-import net.runelite.api.events.GameTick;
 import net.runelite.api.events.HitsplatApplied;
 import net.runelite.client.eventbus.Subscribe;
 
@@ -32,7 +31,6 @@ public final class CombatMinimizer {
     public void onHitsplatApplied(HitsplatApplied e) {
         final Player me = client.getLocalPlayer();
         if (me == null) return;
-        if (!overlay.isActive() || overlay.isMinimized()) return;
 
         boolean iWasHit = (e.getActor() == me);
         boolean iDealtIt = e.getHitsplat() != null && e.getHitsplat().isMine();
@@ -43,13 +41,11 @@ public final class CombatMinimizer {
     }
 
     @Subscribe
-    public void onGameTick(GameTick t) {
+    public void onChoicesPresented(ChoiceManOverlay.ChoicesPresentedEvent ev) {
         if (!overlay.isActive()) return;
 
         int ticksSince = client.getTickCount() - lastCombatTick;
-        boolean inCombatWindow = ticksSince <= GRACE_TICKS;
-
-        if (inCombatWindow && !overlay.isMinimized()) {
+        if (ticksSince <= GRACE_TICKS) {
             overlay.setMinimized(true);
         }
     }

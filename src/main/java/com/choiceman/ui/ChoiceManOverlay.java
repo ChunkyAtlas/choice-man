@@ -6,6 +6,7 @@ import com.choiceman.data.ItemsRepository;
 import lombok.Getter;
 import lombok.Setter;
 import net.runelite.api.Client;
+import net.runelite.client.eventbus.EventBus;
 import net.runelite.client.game.ItemManager;
 import net.runelite.client.input.MouseAdapter;
 import net.runelite.client.input.MouseListener;
@@ -85,6 +86,7 @@ public class ChoiceManOverlay extends Overlay {
     private static final int TITLE_TOP_Y = 0, CARDS_PULL_UP_Y = 9;
 
     private final Client client;
+    private final EventBus eventBus;
     private final CardRenderer renderer;
     private final PickAnimationEngine anim;
     // Card layout bookkeeping
@@ -96,6 +98,7 @@ public class ChoiceManOverlay extends Overlay {
     private ItemsRepository repo;
     private ChoiceManUnlocks unlocks;
     private BufferedImage titleImg, cardBgDefault, cardBgGold;
+    public static final class ChoicesPresentedEvent {}
     /**
      * If true, use milestone (gold) card background for the current presentation.
      */
@@ -119,6 +122,7 @@ public class ChoiceManOverlay extends Overlay {
     private volatile boolean active = false;
     // Runtime presentation state
     private volatile List<String> choices;
+    @Getter
     private volatile Instant presentedAt;
     private volatile int hoveredIndex = -1, lastHoverIndex = -1;
     @Getter
@@ -209,8 +213,9 @@ public class ChoiceManOverlay extends Overlay {
      * @param client RuneLite client (used for viewport size).
      */
     @Inject
-    public ChoiceManOverlay(Client client) {
+    public ChoiceManOverlay(Client client, EventBus eventBus) {
         this.client = client;
+        this.eventBus = eventBus;
         setPosition(OverlayPosition.TOP_CENTER);
         setLayer(OverlayLayer.ABOVE_WIDGETS);
         this.renderer = new CardRenderer(this::getAccent);
@@ -328,6 +333,7 @@ public class ChoiceManOverlay extends Overlay {
         }
         fullyRevealed = new boolean[bases.size()];
         setSfxVolumePercent(config != null ? config.sfxVolume() : 100);
+        eventBus.post(new ChoicesPresentedEvent());
     }
 
     /**
