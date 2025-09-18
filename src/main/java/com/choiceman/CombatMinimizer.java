@@ -41,7 +41,7 @@ public final class CombatMinimizer {
     }
 
     @Subscribe
-    public void onChoicesPresented(ChoiceManOverlay.ChoicesPresentedEvent ev) {
+    public void onChoicesPresentedEvent(ChoiceManOverlay.ChoicesPresentedEvent ev) {
         if (!overlay.isActive()) return;
 
         int ticksSince = client.getTickCount() - lastCombatTick;
