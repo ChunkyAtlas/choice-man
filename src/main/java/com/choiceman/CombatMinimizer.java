@@ -32,9 +32,8 @@ public final class CombatMinimizer {
         final Player me = client.getLocalPlayer();
         if (me == null) return;
 
-        boolean iWasHit = (e.getActor() == me);
-        boolean iDealtIt = e.getHitsplat() != null && e.getHitsplat().isMine();
-
+        final boolean iWasHit = (e.getActor() == me);
+        final boolean iDealtIt = e.getHitsplat() != null && e.getHitsplat().isMine();
         if (iWasHit || iDealtIt) {
             lastCombatTick = client.getTickCount();
         }
@@ -43,8 +42,7 @@ public final class CombatMinimizer {
     @Subscribe
     public void onChoicesPresentedEvent(ChoiceManOverlay.ChoicesPresentedEvent ev) {
         if (!overlay.isActive()) return;
-
-        int ticksSince = client.getTickCount() - lastCombatTick;
+        final int ticksSince = client.getTickCount() - lastCombatTick;
         if (ticksSince <= GRACE_TICKS) {
             overlay.setMinimized(true);
         }

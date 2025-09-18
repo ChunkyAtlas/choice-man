@@ -511,9 +511,11 @@ public class ChoiceManOverlay extends Overlay {
         int contentHeight = rows * CARD_H + (rows - 1) * CARD_GAP - Math.max(0, rows - 1) * LIFT_PER_ROW;
         int totalW = availW, totalH = rowY + contentHeight + 16;
 
-        Rectangle pillBounds = renderer.drawMinimizePill(g, totalW, TITLE_TOP_Y, MIN_BTN_W, MIN_BTN_H,
+        final int pillX = 8;
+        final int pillY = TITLE_TOP_Y - 2;
+        minimizeBounds = renderer.drawMinimizePillAt(
+                g, pillX, pillY, MIN_BTN_W, MIN_BTN_H,
                 "Minimize", !animating && hoverMinimize, this::getAccent);
-        minimizeBounds = pillBounds;
 
         return new Dimension(totalW, totalH);
     }

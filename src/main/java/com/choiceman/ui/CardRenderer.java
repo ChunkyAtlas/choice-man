@@ -369,8 +369,6 @@ final class CardRenderer {
      * Draws the top-right minimize pill and returns its hitbox for input.
      *
      * @param g       graphics context
-     * @param totalW  total available width (for right align)
-     * @param topY    top y-position
      * @param w       pill width
      * @param h       pill height
      * @param label   button label
@@ -378,13 +376,16 @@ final class CardRenderer {
      * @param acc     accent color supplier
      * @return rectangle bounds of the pill for hit testing
      */
-    Rectangle drawMinimizePill(Graphics2D g, int totalW, int topY, int w, int h,
-                               String label, boolean hovered, java.util.function.Supplier<Color> acc) {
-        int x = totalW - w - 8, y = topY - 2;
+    Rectangle drawMinimizePillAt(Graphics2D g, int x, int y, int w, int h,
+                                 String label, boolean hovered, Supplier<Color> acc) {
         g.setColor(new Color(26, 26, 26, 220));
         g.fillRoundRect(x, y, w, h, 10, 10);
         Color a = acc.get();
-        if (hovered) a = new Color(a.getRed(), a.getGreen(), a.getBlue(), Math.min(255, (int) (a.getAlpha() * 1.1)));
+        if (hovered) {
+            a = new Color(a.getRed(), a.getGreen(), a.getBlue(),
+                    Math.min(255, (int) (a.getAlpha() * 1.1)));
+        }
+
         Stroke s = g.getStroke();
         g.setStroke(new BasicStroke(1.8f));
         g.setColor(a);
@@ -393,7 +394,11 @@ final class CardRenderer {
         g.setFont(g.getFont().deriveFont(Font.BOLD, 12f));
         g.setColor(Color.WHITE);
         FontMetrics fm = g.getFontMetrics();
-        g.drawString(label, x + (w - fm.stringWidth(label)) / 2, y + ((h - fm.getHeight()) / 2) + fm.getAscent());
+
+        g.drawString(label,
+                x + (w - fm.stringWidth(label)) / 2,
+                y + ((h - fm.getHeight()) / 2) + fm.getAscent());
+
         return new Rectangle(x, y, w, h);
     }
 
