@@ -10,9 +10,8 @@ import javax.inject.Inject;
 import javax.inject.Singleton;
 
 /**
- * Auto-minimizes the Choice Man overlay while "in combat".
- * When the local player either deals or receives a hitsplat, remember the current tick
- * and keep the overlay minimized for a 7-tick grace period.
+ * Auto-minimizes the Choice Man overlay only at presentation time if "in combat".
+ * You can always manually minimize/restore afterward.
  */
 @Singleton
 public final class CombatMinimizer {
@@ -34,6 +33,7 @@ public final class CombatMinimizer {
 
         final boolean iWasHit = (e.getActor() == me);
         final boolean iDealtIt = e.getHitsplat() != null && e.getHitsplat().isMine();
+
         if (iWasHit || iDealtIt) {
             lastCombatTick = client.getTickCount();
         }
@@ -42,9 +42,13 @@ public final class CombatMinimizer {
     @Subscribe
     public void onChoicesPresentedEvent(ChoiceManOverlay.ChoicesPresentedEvent ev) {
         if (!overlay.isActive()) return;
-        final int ticksSince = client.getTickCount() - lastCombatTick;
-        if (ticksSince <= GRACE_TICKS) {
+        if (isInCombat()) {
             overlay.setMinimized(true);
         }
+    }
+
+    private boolean isInCombat() {
+        final int ticksSince = client.getTickCount() - lastCombatTick;
+        return ticksSince <= GRACE_TICKS;
     }
 }
