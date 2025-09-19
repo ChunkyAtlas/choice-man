@@ -64,7 +64,7 @@ public class ChoiceManPlugin extends Plugin {
      * How many of the pending presentations are milestone (200/500/1000) and should use gold BG.
      */
     private final AtomicInteger pendingMilestoneChoices = new AtomicInteger(0);
-
+    private final AtomicInteger pendingAutoMinimizeChoices = new AtomicInteger(0);
     @Inject
     private Client client;
     @Inject
@@ -104,12 +104,10 @@ public class ChoiceManPlugin extends Plugin {
     private UnlocksTabUI unlocksTabUI;
     @Inject
     private CombatMinimizer combatMinimizer;
-
     private ChoiceManPanel choiceManPanel;
     private NavigationButton navButton;
     private MouseListener overlayMouse;
     private volatile Integer forcedOfferCount = null;
-
     // client-thread-guarded state (visibility via volatile)
     private volatile boolean featuresActive = false;
     private volatile int lastKnownTotal = -1;
@@ -182,6 +180,7 @@ public class ChoiceManPlugin extends Plugin {
 
         pendingChoices.set(0);
         pendingMilestoneChoices.set(0);
+        pendingAutoMinimizeChoices.set(0);
         lastKnownTotal = -1;
         baselineReady = false;
 
@@ -311,6 +310,7 @@ public class ChoiceManPlugin extends Plugin {
 
         pendingChoices.set(0);
         pendingMilestoneChoices.set(0);
+        pendingAutoMinimizeChoices.set(0);
         choiceManOverlay.setPendingCount(0);
         lastKnownTotal = -1;
         baselineReady = false;
@@ -365,6 +365,10 @@ public class ChoiceManPlugin extends Plugin {
                 pendingMilestoneChoices.addAndGet(crossedMilestones);
             }
 
+            if (combatMinimizer.isInCombatNow()) {
+                pendingAutoMinimizeChoices.addAndGet(delta);
+            }
+
             int totalQueued = pendingChoices.addAndGet(delta);
             lastKnownTotal = current;
 
@@ -417,6 +421,7 @@ public class ChoiceManPlugin extends Plugin {
         if (pool.isEmpty()) {
             pendingChoices.set(0);
             pendingMilestoneChoices.set(0);
+            pendingAutoMinimizeChoices.set(0);
             choiceManOverlay.setPendingCount(0);
             return;
         }
@@ -436,6 +441,11 @@ public class ChoiceManPlugin extends Plugin {
         }
 
         choiceManOverlay.presentChoicesSequential(offer, milestone);
+
+        int hadTag = pendingAutoMinimizeChoices.getAndUpdate(v -> v > 0 ? v - 1 : 0);
+        if (hadTag > 0) {
+            choiceManOverlay.setMinimized(true);
+        }
     }
 
     /**
