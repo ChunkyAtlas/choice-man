@@ -5,7 +5,7 @@ import net.runelite.api.Player;
 import net.runelite.api.events.HitsplatApplied;
 import net.runelite.client.eventbus.Subscribe;
 
-import javax.inject.Inject;
+import lombok.RequiredArgsConstructor;
 import javax.inject.Singleton;
 
 /**
@@ -13,16 +13,12 @@ import javax.inject.Singleton;
  * Other classes can query {@link #isInCombatNow()} to gate behavior.
  */
 @Singleton
+@RequiredArgsConstructor(onConstructor_ = @javax.inject.Inject)
 public final class CombatMinimizer {
     private static final int GRACE_TICKS = 7;
 
     private final Client client;
-    private int lastCombatTick = Integer.MIN_VALUE;
-
-    @Inject
-    public CombatMinimizer(Client client) {
-        this.client = client;
-    }
+    private volatile int lastCombatTick = Integer.MIN_VALUE;
 
     @Subscribe
     public void onHitsplatApplied(HitsplatApplied e) {
