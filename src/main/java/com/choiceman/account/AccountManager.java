@@ -1,6 +1,7 @@
 package com.choiceman.account;
 
 import lombok.Getter;
+import lombok.RequiredArgsConstructor;
 import net.runelite.api.Client;
 import net.runelite.api.GameState;
 import net.runelite.api.Player;
@@ -10,7 +11,6 @@ import net.runelite.api.events.GameStateChanged;
 import net.runelite.client.eventbus.EventBus;
 import net.runelite.client.eventbus.Subscribe;
 
-import javax.inject.Inject;
 import javax.inject.Singleton;
 
 /**
@@ -18,6 +18,7 @@ import javax.inject.Singleton;
  * when it becomes known or changes.
  */
 @Singleton
+@RequiredArgsConstructor(onConstructor_ = @javax.inject.Inject)
 public class AccountManager {
     private final Client client;
     private final EventBus eventBus;
@@ -37,12 +38,6 @@ public class AccountManager {
      * Set to true after we successfully latched a non-null name for the current hash.
      */
     private volatile boolean nameSet = false;
-
-    @Inject
-    public AccountManager(Client client, EventBus eventBus) {
-        this.client = client;
-        this.eventBus = eventBus;
-    }
 
     /**
      * @return true when we have a valid account hash and a resolved player name.

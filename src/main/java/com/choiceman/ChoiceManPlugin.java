@@ -52,6 +52,7 @@ public class ChoiceManPlugin extends Plugin {
     private static final int GE_GROUP_ID = 162;
     private static final int GE_RESULTS_CHILD = 51;
     private static final String COL_RESET = "<col=000000>";
+    private static final String CHAT_PREFIX = black("[") + blue("Choice Man") + black("] ");
     private static final Skill[] TRACKED_SKILLS = java.util.Arrays.stream(Skill.values())
             .filter(s -> s != Skill.OVERALL)
             .toArray(Skill[]::new);
@@ -65,6 +66,7 @@ public class ChoiceManPlugin extends Plugin {
      */
     private final AtomicInteger pendingMilestoneChoices = new AtomicInteger(0);
     private final AtomicInteger pendingAutoMinimizeChoices = new AtomicInteger(0);
+    private int lastHintTotal = -1;
     @Inject
     private Client client;
     @Inject
@@ -178,11 +180,7 @@ public class ChoiceManPlugin extends Plugin {
         unlocks.init(gson, itemsRepo);
         unlocks.loadFromDisk();
 
-        pendingChoices.set(0);
-        pendingMilestoneChoices.set(0);
-        pendingAutoMinimizeChoices.set(0);
-        lastKnownTotal = -1;
-        baselineReady = false;
+        resetProgressTracking();
 
         // Load both backgrounds: default and gold
         choiceManOverlay.setAssets(
@@ -307,13 +305,16 @@ public class ChoiceManPlugin extends Plugin {
             }
         }
         choiceManPanel = null;
-
+        resetProgressTracking();
+    }
+    private void resetProgressTracking() {
         pendingChoices.set(0);
         pendingMilestoneChoices.set(0);
         pendingAutoMinimizeChoices.set(0);
-        choiceManOverlay.setPendingCount(0);
+        lastHintTotal = -1;
         lastKnownTotal = -1;
         baselineReady = false;
+        choiceManOverlay.setPendingCount(0);
     }
 
     /**
@@ -333,6 +334,7 @@ public class ChoiceManPlugin extends Plugin {
         if (!featuresActive) return;
         if (event.getGameState() == GameState.LOGGED_IN || event.getGameState() == GameState.LOGGING_IN) {
             baselineReady = false;
+            lastHintTotal = -1;
         }
     }
 
@@ -443,7 +445,7 @@ public class ChoiceManPlugin extends Plugin {
         choiceManOverlay.presentChoicesSequential(offer, milestone);
 
         int hadTag = pendingAutoMinimizeChoices.getAndUpdate(v -> v > 0 ? v - 1 : 0);
-        if (hadTag > 0) {
+        if (hadTag > 0 && combatMinimizer.isInCombatNow()) {
             choiceManOverlay.setMinimized(true);
         }
     }
@@ -491,7 +493,7 @@ public class ChoiceManPlugin extends Plugin {
         }
 
         if (showCount == null || showCount < 1 || showCount > 5) {
-            addGameMessage(black("[") + blue("Choice Man") + black("] ")
+            addGameMessage(CHAT_PREFIX
                     + "Usage: ::roll " + red("N") + " unlocks " + black("[") + red("Q") + black("] ")
                     + "(N = 1–5 cards per pick, optional Q = number of picks to queue).");
             return;
@@ -502,7 +504,7 @@ public class ChoiceManPlugin extends Plugin {
         // Build pool to ensure there is at least something to show
         List<String> allLocked = itemsRepo.getAllBasesStillLocked(unlocks);
         if (allLocked.isEmpty()) {
-            addGameMessage(black("[") + blue("Choice Man") + black("] ") + "No locked items remain to roll.");
+            addGameMessage(CHAT_PREFIX + "No locked items remain to roll.");
             return;
         }
 
@@ -515,11 +517,11 @@ public class ChoiceManPlugin extends Plugin {
 
         if (!choiceManOverlay.isActive()) {
             startChoiceIfNeeded(); // kick off immediately if idle
-            addGameMessage(black("[") + blue("Choice Man") + black("] ")
+            addGameMessage(CHAT_PREFIX
                     + "Rolling " + red(String.valueOf(q)) + " pick" + (q == 1 ? "" : "s")
                     + " with " + red(String.valueOf(showCount)) + " choices each.");
         } else {
-            addGameMessage(black("[") + blue("Choice Man") + black("] ")
+            addGameMessage(CHAT_PREFIX
                     + "Queued " + red(String.valueOf(q)) + " more pick" + (q == 1 ? "" : "s")
                     + " (" + red(String.valueOf(showCount)) + " choices each).");
         }
@@ -592,21 +594,20 @@ public class ChoiceManPlugin extends Plugin {
     }
 
     private void announceThresholdHint(int currentTotal) {
+        if (currentTotal == lastHintTotal) return;
+        lastHintTotal = currentTotal;
         final int currentChoices = choiceCountForTotal(currentTotal);
         final int next = nextThreshold(currentTotal);
 
-        // Black brackets + darker blue label
-        final String prefix = black("[") + blue("Choice Man") + black("] ");
-
         if (next == -1) {
-            addGameMessage(prefix + "You’re at the max — " + red(currentChoices + " options") + " per pick.");
+            addGameMessage(CHAT_PREFIX + "You’re at the max — " + red(currentChoices + " options") + " per pick.");
             return;
         }
 
         final int remaining = Math.max(0, next - currentTotal);
         final String levelsWord = (remaining == 1) ? "level" : "levels";
 
-        addGameMessage(prefix
+        addGameMessage(CHAT_PREFIX
                 + red(remaining + " " + levelsWord) + " until your picks show "
                 + red((currentChoices + 1) + " options")
                 + " (threshold: " + red(String.valueOf(next)) + " total).");
