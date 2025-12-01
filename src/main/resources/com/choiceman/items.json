@@ -2008,30 +2008,6 @@
     ]
   },
   {
-    "name": "Armageddon cape fabric",
-    "ids": [
-      29628
-    ]
-  },
-  {
-    "name": "Armageddon rug",
-    "ids": [
-      29619
-    ]
-  },
-  {
-    "name": "Armageddon teleport scroll",
-    "ids": [
-      29622
-    ]
-  },
-  {
-    "name": "Armageddon weapon scroll",
-    "ids": [
-      29625
-    ]
-  },
-  {
     "name": "Arrow shaft",
     "ids": [
       52
@@ -13247,6 +13223,12 @@
     ]
   },
   {
+    "name": "Mimic scroll case",
+    "ids": [
+      30926
+    ]
+  },
+  {
     "name": "Minced meat",
     "ids": [
       7070
@@ -13310,6 +13292,42 @@
     "name": "Mining helmet",
     "ids": [
       5014
+    ]
+  },
+  {
+    "name": "Minor beginner scroll case",
+    "ids": [
+      30902
+    ]
+  },
+  {
+    "name": "Minor easy scroll case",
+    "ids": [
+      30906
+    ]
+  },
+  {
+    "name": "Minor elite scroll case",
+    "ids": [
+      30918
+    ]
+  },
+  {
+    "name": "Minor hard scroll case",
+    "ids": [
+      30914
+    ]
+  },
+  {
+    "name": "Minor master scroll case",
+    "ids": [
+      30922
+    ]
+  },
+  {
+    "name": "Minor medium scroll case",
+    "ids": [
+      30910
     ]
   },
   {
@@ -23498,7 +23516,8 @@
   {
     "name": "Mithril Cannonball",
     "ids": [
-      31910]
+       31910
+    ]
   },
   {
     "name": "Mithril Chainshot Cannonball",
