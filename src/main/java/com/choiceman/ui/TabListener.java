@@ -1,5 +1,7 @@
 package com.choiceman.ui;
 
+import com.choiceman.ChoiceManConfig;
+
 import net.runelite.api.Client;
 import net.runelite.api.events.VarClientIntChanged;
 import net.runelite.client.callback.ClientThread;
@@ -23,12 +25,17 @@ public class TabListener {
     private final Client client;
     private final ClientThread clientThread;
     private final UnlocksWidgetController widgetController;
+    private final ChoiceManConfig config;
 
     @Inject
-    public TabListener(Client client, ClientThread clientThread, UnlocksWidgetController widgetController) {
+    public TabListener(Client client,
+                       ClientThread clientThread,
+                       UnlocksWidgetController widgetController,
+                       ChoiceManConfig config) {
         this.client = client;
         this.clientThread = clientThread;
         this.widgetController = widgetController;
+        this.config = config;
     }
 
     @Subscribe
@@ -42,9 +49,13 @@ public class TabListener {
         if (newTab != MUSIC_TAB) {
             clientThread.invokeLater(() -> {
                 if (widgetController.isOverrideActive()) {
-                    widgetController.restore();
+                    if (!config.showUnlocksAlwaysOpen()) {
+                        widgetController.restore();
+                        widgetController.restoreTopRowControls();
+                    }
+                } else {
+                    widgetController.restoreTopRowControls();
                 }
-                widgetController.restoreTopRowControls();
             });
         } else {
             // Entering Music tab

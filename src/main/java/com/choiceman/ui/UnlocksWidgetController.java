@@ -40,6 +40,9 @@ public final class UnlocksWidgetController {
     private static final int COLUMNS = 4;
     private static final int MARGIN_X = 8;
     private static final int MARGIN_Y = 8;
+    private static final int CLOSE_SPRITE = 520;
+    private static final int CLOSE_SIZE = 10;
+    private static final int CLOSE_PAD = 4;
 
     private static final String CFG_GROUP = "choiceman";
     private static final String CFG_FAVS = "unlockFavorites";
@@ -360,6 +363,21 @@ public final class UnlocksWidgetController {
         drawProgressStretchToFrame(title, frame,
                 unlocks.unlockedList().size(),
                 itemsRepo.getAllBases().size());
+
+        if (root != null) {
+            final Widget close = root.createChild(-1);
+            close.setType(WidgetType.GRAPHIC);
+            close.setOriginalX(CLOSE_PAD);
+            close.setOriginalY(CLOSE_PAD);
+            close.setOriginalWidth(CLOSE_SIZE);
+            close.setOriginalHeight(CLOSE_SIZE);
+            close.setSpriteId(CLOSE_SPRITE);
+            close.setAction(0, "Close");
+            close.setOnOpListener((JavaScriptCallback) (ScriptEvent ev) -> restore());
+            close.setHasListener(true);
+            close.revalidate();
+            createdRootWidgets.add(close);
+        }
 
         if (root != null) root.revalidate();
     }

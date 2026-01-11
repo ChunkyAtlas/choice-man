@@ -1,10 +1,14 @@
 package com.choiceman.menus;
 
 import com.choiceman.ChoiceManPlugin;
+import com.choiceman.ChoiceManConfig;
 import com.choiceman.data.ChoiceManUnlocks;
 import com.choiceman.data.ItemsRepository;
+import com.choiceman.filters.EnsouledHeadMapping;
+
 import lombok.Getter;
 import lombok.Setter;
+
 import net.runelite.api.Client;
 import net.runelite.api.GameState;
 import net.runelite.api.MenuAction;
@@ -65,6 +69,8 @@ public class ActionHandler {
     @Inject
     private ChoiceManPlugin plugin;
     @Inject
+    private ChoiceManConfig config;
+    @Inject
     private Restrictions restrictions;
     @Inject
     private ChoiceManUnlocks unlocks;
@@ -101,7 +107,8 @@ public class ActionHandler {
         final MenuAction act = event.getMenuAction();
         if (act != null && GROUND_ACTIONS.contains(act)) {
             final int rawItemId = event.getId() != -1 ? event.getId() : event.getMenuEntry().getItemId();
-            final int canonicalGroundId = itemManager.canonicalize(rawItemId);
+            final int mapped = EnsouledHeadMapping.toTradeableId(rawItemId);
+            final int canonicalGroundId = itemManager.canonicalize(mapped);
 
             final String base = itemsRepo.getBaseForId(canonicalGroundId);
             if (base != null && !unlocks.isBaseUsable(base)) {
@@ -154,8 +161,9 @@ public class ActionHandler {
         final int raw = GROUND_ACTIONS.contains(type)
                 ? event.getIdentifier()
                 : Math.max(event.getItemId(), entry.getItemId());
+        final int mapped = EnsouledHeadMapping.toTradeableId(raw);
 
-        return itemManager.canonicalize(raw);
+        return itemManager.canonicalize(mapped);
     }
 
     @Subscribe
@@ -175,6 +183,9 @@ public class ActionHandler {
             entry.setOption("<col=808080>" + option);
             entry.setTarget("<col=808080>" + target);
             entry.onClick(DISABLED);
+            if (config.deprioritizeLockedOptions()) {
+                entry.setDeprioritized(true);
+            }
         }
     }
 

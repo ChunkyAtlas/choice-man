@@ -39,6 +39,22 @@ public interface ChoiceManConfig extends Config
     default boolean geRestrictions() { return true; }
 
     @ConfigItem(
+            keyName = "showUnlocksAlwaysOpen",
+            name = "Show Unlocks Always Open",
+            description = "Keep the UnlocksWidget override open when switching away from the Music tab. Use the close button to exit.",
+            position = 11
+    )
+    default boolean showUnlocksAlwaysOpen() { return true; }
+
+    @ConfigItem(
+            keyName = "deprioritizeLockedOptions",
+            name = "Deprioritize Locked Menu Options",
+            description = "Deprioritize locked menu options below Walk here.",
+            position = 12
+    )
+    default boolean deprioritizeLockedOptions() { return true; }
+
+    @ConfigItem(
             keyName = "choiceRevealMs",
             name = "Choice reveal animation (ms)",
             description = "Per-card reveal duration for the unlock choice overlay.",
