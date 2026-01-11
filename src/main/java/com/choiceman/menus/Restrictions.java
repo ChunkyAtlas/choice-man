@@ -7,6 +7,7 @@ import net.runelite.api.*;
 import net.runelite.api.coords.WorldArea;
 import net.runelite.api.coords.WorldPoint;
 import net.runelite.api.events.GameTick;
+import net.runelite.api.gameval.InterfaceID;
 import net.runelite.api.gameval.InventoryID;
 import net.runelite.api.widgets.Widget;
 import net.runelite.client.eventbus.Subscribe;
@@ -24,8 +25,8 @@ import java.util.Set;
  */
 @Singleton
 public class Restrictions {
-    public static final int SPELL_REQUIREMENT_OVERLAY_NORMAL = 14287051;
-    public static final int AUTOCAST_REQUIREMENT_OVERLAY_NORMAL = 13172738;
+    public static final int SPELL_REQUIREMENT_OVERLAY_NORMAL = InterfaceID.MagicSpellbook.TOOLTIP;
+    public static final int AUTOCAST_REQUIREMENT_OVERLAY_NORMAL = InterfaceID.Autocast.INFO;
     private static final int[] RUNE_POUCH_TYPE_VARBITS = {29, 1622, 1623, 14285, 15373, 15374};
     private static final int[] RUNE_POUCH_AMOUNT_VARBITS = {1624, 1625, 1626, 14286, 15375, 15376};
     private static final WorldArea FOUNTAIN_OF_RUNE_AREA = new WorldArea(3367, 3890, 13, 9, 0);
@@ -74,7 +75,7 @@ public class Restrictions {
         if (providerMustBeEquipped && !actuallyEquipped) return;
 
         Set<Integer> provided = RuneProvider.getProvidedRunes(providerId);
-        if (provided == null || provided.isEmpty()) return;
+        if (provided.isEmpty()) return;
 
         ItemManager im = plugin.getItemManager();
         for (int runeId : provided) {

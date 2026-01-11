@@ -4,6 +4,7 @@ import lombok.Getter;
 
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
 
 /**
@@ -12,13 +13,16 @@ import java.util.Map;
  * Lookups use the exact menu option text as displayed by the client.
  */
 @Getter
-public enum SkillOp {
+public enum SkillOp
+{
     CHOP_DOWN("Chop down"),
     MINE("Mine"),
-    NET("Net"),
+    SMALL_NET("Small Net"),
+    BIG_NET("Big Net"),
     CAGE("Cage"),
     BAIT("Bait"),
     LURE("Lure"),
+    HARPOON("Harpoon"),
     RAKE("Rake"),
     PRUNE("Prune"),
     CURE("Cure"),
@@ -30,40 +34,33 @@ public enum SkillOp {
     FIRE("Fire"),
     CRAFT_RUNE("Craft-rune");
 
-    /**
-     * Unmodifiable map from menu option text to {@link SkillOp}.
-     * Built once at class load for O(1) lookups.
-     */
-    private static final Map<String, SkillOp> STRING_TO_OP;
-
-    static {
-        Map<String, SkillOp> m = new HashMap<>(values().length);
-        for (SkillOp op : values()) {
-            m.put(op.option, op);
-        }
-        STRING_TO_OP = Collections.unmodifiableMap(m); // defensive: read-only view. :contentReference[oaicite:1]{index=1}
-    }
-
-    /**
-     * Exact menu option text as shown in the client.
-     */
     private final String option;
 
-    SkillOp(String option) {
+    SkillOp(String option)
+    {
         this.option = option;
     }
 
-    /**
-     * @return true if {@code option} matches a known skill operation.
-     */
-    public static boolean isSkillOp(String option) {
-        return option != null && STRING_TO_OP.containsKey(option);
+    private static final HashSet<String> ALL_SKILL_OPS = new HashSet<>();
+    private static final HashMap<String, SkillOp> STRING_TO_OP = new HashMap<>();
+
+    static
+    {
+        for (SkillOp skillOp : SkillOp.values())
+        {
+            ALL_SKILL_OPS.add(skillOp.option);
+            STRING_TO_OP.put(skillOp.option, skillOp);
+        }
     }
 
-    /**
-     * @return the {@link SkillOp} for {@code option}, or {@code null} if unknown.
-     */
-    public static SkillOp fromString(String option) {
-        return option == null ? null : STRING_TO_OP.get(option);
+    public static boolean isSkillOp(String option)
+    {
+        return ALL_SKILL_OPS.contains(option);
+    }
+
+    public static SkillOp fromString(String option)
+    {
+        if (!isSkillOp(option)) return null;
+        return STRING_TO_OP.get(option);
     }
 }

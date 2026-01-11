@@ -1,40 +1,36 @@
 package com.choiceman.menus;
 
 import lombok.Getter;
+import net.runelite.api.gameval.InterfaceID;
 
-import java.util.Set;
-
-/**
- * Widget group IDs for UIs where limited actions are allowed (e.g., bank/deposit box).
- * Provides a fast membership check for gating logic elsewhere.
- */
 @Getter
-public enum EnabledUI {
-    BANK(12),
-    DEPOSIT_BOX(192);
+public enum EnabledUI
+{
+    BANK(InterfaceID.BANKMAIN, true, true),
+    DEPOSIT_BOX(InterfaceID.BANK_DEPOSITBOX, true, true),
+    CUSTOM_FUR_STORE(InterfaceID.HuntingCustomfurs.CONTENT, false, true),
+    Crafting_Gold(InterfaceID.CraftingGold.UNIVERSE, false, true),
+    TTREK_REWARDS(InterfaceID.TREK_REWARDS,false, true),
+    SKILLMULTI(InterfaceID.Skillmulti.ALL, false, true),
+    RUNEDOKU(InterfaceID.ROGUETRADER_SUDOKU, false, true);
 
-    private static final Set<Integer> IDS = Set.of(
-            BANK.id,
-            DEPOSIT_BOX.id
-    );
+    private final int id; // group id
+    private final boolean greyLockedItems; // should grey/disable locked items in this UI
+    private final boolean allowAllActions; // should bypass action restrictions in this UI
 
-    private final int id;
-
-    EnabledUI(int id) {
-        this.id = id;
+    EnabledUI(int id, boolean greyLockedItems, boolean allowAllActions)
+    {
+        this.id = (id > 0xFFFF) ? (id >>> 16) : id;
+        this.greyLockedItems = greyLockedItems;
+        this.allowAllActions = allowAllActions;
     }
 
-    /**
-     * Returns an immutable set of all enabled UI group IDs.
-     */
-    public static Set<Integer> ids() {
-        return IDS;
-    }
-
-    /**
-     * @return true if the given widget group ID corresponds to an enabled UI.
-     */
-    public static boolean isEnabled(int groupId) {
-        return IDS.contains(groupId);
+    public static EnabledUI fromGroupId(int groupId)
+    {
+        for (EnabledUI ui : values())
+        {
+            if (ui.id == groupId) return ui;
+        }
+        return null;
     }
 }

@@ -40,6 +40,7 @@ public final class CombatMinimizer {
      * True if seen a hitsplat in the last GRACE_TICKS.
      */
     public boolean isInCombatNow() {
-        return client.getTickCount() - lastCombatTick <= GRACE_TICKS;
+        if (lastCombatTick == Integer.MIN_VALUE) return false;
+        return (long) client.getTickCount() - (long) lastCombatTick <= GRACE_TICKS;
     }
 }

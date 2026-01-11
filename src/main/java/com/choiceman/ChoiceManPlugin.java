@@ -112,6 +112,10 @@ public class ChoiceManPlugin extends Plugin {
     private volatile boolean featuresActive = false;
     private volatile int lastKnownTotal = -1;
     private volatile boolean baselineReady = false;
+    private volatile int lastHintRemaining = Integer.MIN_VALUE;
+    private volatile int lastHintThreshold = -2;
+    private volatile boolean maxHintSent = false;
+    private static final java.util.Set<Integer> HINT_REMAINING_LEVELS = java.util.Set.of(5, 1);
 
     // Chat color helpers
     private static String blue(String s) {
@@ -183,6 +187,9 @@ public class ChoiceManPlugin extends Plugin {
         pendingAutoMinimizeChoices.set(0);
         lastKnownTotal = -1;
         baselineReady = false;
+        lastHintRemaining = Integer.MIN_VALUE;
+        lastHintThreshold = -2;
+        maxHintSent = false;
 
         // Load both backgrounds: default and gold
         choiceManOverlay.setAssets(
@@ -345,6 +352,12 @@ public class ChoiceManPlugin extends Plugin {
     public void onGameTick(GameTick tick) {
         if (!featuresActive || client.getGameState() != GameState.LOGGED_IN) return;
 
+        if (choiceManOverlay.isActive()
+                && choiceManOverlay.isMinimized()
+                && !combatMinimizer.isInCombatNow()) {
+            choiceManOverlay.setMinimized(false);
+        }
+
         final int current = computeTotalLevel();
         if (!baselineReady) {
             lastKnownTotal = current;
@@ -443,7 +456,7 @@ public class ChoiceManPlugin extends Plugin {
         choiceManOverlay.presentChoicesSequential(offer, milestone);
 
         int hadTag = pendingAutoMinimizeChoices.getAndUpdate(v -> v > 0 ? v - 1 : 0);
-        if (hadTag > 0) {
+        if (hadTag > 0 && combatMinimizer.isInCombatNow()) {
             choiceManOverlay.setMinimized(true);
         }
     }
@@ -599,11 +612,18 @@ public class ChoiceManPlugin extends Plugin {
         final String prefix = black("[") + blue("Choice Man") + black("] ");
 
         if (next == -1) {
+            if (maxHintSent) return;
+            maxHintSent = true;
             addGameMessage(prefix + "You’re at the max — " + red(currentChoices + " options") + " per pick.");
             return;
         }
 
+        maxHintSent = false;
         final int remaining = Math.max(0, next - currentTotal);
+        if (!HINT_REMAINING_LEVELS.contains(remaining)) return;
+        if (remaining == lastHintRemaining && next == lastHintThreshold) return;
+        lastHintRemaining = remaining;
+        lastHintThreshold = next;
         final String levelsWord = (remaining == 1) ? "level" : "levels";
 
         addGameMessage(prefix
