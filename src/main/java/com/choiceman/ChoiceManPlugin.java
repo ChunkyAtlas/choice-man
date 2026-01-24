@@ -51,7 +51,7 @@ public class ChoiceManPlugin extends Plugin {
     private static final int GE_SEARCH_BUILD_SCRIPT = 751;
     private static final int GE_GROUP_ID = 162;
     private static final int GE_RESULTS_CHILD = 51;
-    private static final String COL_RESET = "<col=000000>";
+    private static final String COL_RESET = "</col>";
     private static final Skill[] TRACKED_SKILLS = java.util.Arrays.stream(Skill.values())
             .filter(s -> s != Skill.OVERALL)
             .toArray(Skill[]::new);
@@ -115,7 +115,7 @@ public class ChoiceManPlugin extends Plugin {
     private volatile int lastHintRemaining = Integer.MIN_VALUE;
     private volatile int lastHintThreshold = -2;
     private volatile boolean maxHintSent = false;
-    private static final java.util.Set<Integer> HINT_REMAINING_LEVELS = java.util.Set.of(5, 1);
+    private volatile boolean autoMinimizedActive = false;
 
     // Chat color helpers
     private static String blue(String s) {
@@ -190,6 +190,7 @@ public class ChoiceManPlugin extends Plugin {
         lastHintRemaining = Integer.MIN_VALUE;
         lastHintThreshold = -2;
         maxHintSent = false;
+        autoMinimizedActive = false;
 
         // Load both backgrounds: default and gold
         choiceManOverlay.setAssets(
@@ -320,6 +321,7 @@ public class ChoiceManPlugin extends Plugin {
         pendingAutoMinimizeChoices.set(0);
         choiceManOverlay.setPendingCount(0);
         lastKnownTotal = -1;
+        autoMinimizedActive = false;
         baselineReady = false;
     }
 
@@ -354,8 +356,10 @@ public class ChoiceManPlugin extends Plugin {
 
         if (choiceManOverlay.isActive()
                 && choiceManOverlay.isMinimized()
+                && autoMinimizedActive
                 && !combatMinimizer.isInCombatNow()) {
             choiceManOverlay.setMinimized(false);
+            autoMinimizedActive = false;
         }
 
         final int current = computeTotalLevel();
@@ -458,6 +462,7 @@ public class ChoiceManPlugin extends Plugin {
         int hadTag = pendingAutoMinimizeChoices.getAndUpdate(v -> v > 0 ? v - 1 : 0);
         if (hadTag > 0 && combatMinimizer.isInCombatNow()) {
             choiceManOverlay.setMinimized(true);
+            autoMinimizedActive = true;
         }
     }
 
@@ -620,7 +625,7 @@ public class ChoiceManPlugin extends Plugin {
 
         maxHintSent = false;
         final int remaining = Math.max(0, next - currentTotal);
-        if (!HINT_REMAINING_LEVELS.contains(remaining)) return;
+        if (remaining <= 0 || (remaining % 5) != 0) return;
         if (remaining == lastHintRemaining && next == lastHintThreshold) return;
         lastHintRemaining = remaining;
         lastHintThreshold = next;
