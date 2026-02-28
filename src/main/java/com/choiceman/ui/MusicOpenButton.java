@@ -33,8 +33,8 @@ public class MusicOpenButton {
     private static final int W = 14, H = 14;
 
     private static final int GAP = 4;
-    private static final int NUDGE_LEFT = 26;
-    private static final int NUDGE_DOWN = 0;
+    private static final int NUDGE_LEFT = 30;
+    private static final int NUDGE_DOWN = 36;
 
     private final Client client;
     private final ClientThread clientThread;
