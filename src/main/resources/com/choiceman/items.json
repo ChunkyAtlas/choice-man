@@ -24738,6 +24738,36 @@
     ]
   },
   {
+    "name": "Mooleta",
+    "ids": [
+      33101
+    ]
+  },
+  {
+    "name": "Raw T-Bone Steak",
+    "ids": [
+      33106
+    ]
+  },
+  {
+    "name": "Cooked T-Bone Steak",
+    "ids": [
+      33109
+    ]
+  },
+  {
+    "name": "Bottomless Milk Bucket (Empty)",
+    "ids": [
+      33091
+    ]
+  },
+  {
+    "name": "Cow Slippers",
+    "ids": [
+      33093,33096,33097,33098
+    ]
+  },
+  {
     "name": "Zulrah's scales",
     "ids": [
       12934
