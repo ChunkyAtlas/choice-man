@@ -31,16 +31,21 @@ public class Restrictions {
     private static final int[] RUNE_POUCH_AMOUNT_VARBITS = {1624, 1625, 1626, 14286, 15375, 15376};
     private static final WorldArea FOUNTAIN_OF_RUNE_AREA = new WorldArea(3367, 3890, 13, 9, 0);
     private final Set<SkillOp> enabledSkillOps = EnumSet.noneOf(SkillOp.class);
+
     /**
      * Canonical rune IDs currently available from unlocked providers (inventory/equipped/pouch).
      */
     private final Set<Integer> availableRunes = new HashSet<>();
+
     @Inject
     private ChoiceManPlugin plugin;
+
     @Inject
     private Client client;
+
     @Inject
     private ChoiceManUnlocks unlocks;
+
     @Inject
     private ItemsRepository itemsRepo;
 
@@ -68,7 +73,7 @@ public class Restrictions {
 
     /**
      * Adds provided runes for a provider iff the provider is unlocked and (if required) equipped.
-     * Only runes that are themselves unlocked are counted.
+     * Providers act as those runes: provided runes are counted even if the rune base itself isn't unlocked.
      */
     private void addProviderRunesIfUnlocked(int providerId, boolean providerMustBeEquipped, boolean actuallyEquipped) {
         if (!isUnlockedAndInPlay(providerId)) return;
@@ -79,9 +84,7 @@ public class Restrictions {
 
         ItemManager im = plugin.getItemManager();
         for (int runeId : provided) {
-            if (isUnlockedAndInPlay(runeId)) {
-                availableRunes.add(im.canonicalize(runeId));
-            }
+            availableRunes.add(im.canonicalize(runeId));
         }
     }
 
@@ -93,6 +96,8 @@ public class Restrictions {
         enabledSkillOps.clear();
         availableRunes.clear();
 
+        ItemManager im = plugin.getItemManager();
+
         ItemContainer equipped = client.getItemContainer(InventoryID.WORN);
         ItemContainer inv = client.getItemContainer(InventoryID.INV);
 
@@ -100,7 +105,8 @@ public class Restrictions {
         if (equipped != null) {
             for (Item item : equipped.getItems()) {
                 if (item == null) continue;
-                int id = item.getId();
+
+                int id = im.canonicalize(item.getId());
 
                 SkillItem s = SkillItem.fromId(id);
                 if (s != null && (!s.isRequiresUnlock() || isUnlockedAndInPlay(id))) {
@@ -116,7 +122,8 @@ public class Restrictions {
         if (inv != null) {
             for (Item item : inv.getItems()) {
                 if (item == null) continue;
-                int id = item.getId();
+
+                int id = im.canonicalize(item.getId());
 
                 SkillItem s = SkillItem.fromId(id);
                 if (s != null && (!s.isRequiresUnlock() || isUnlockedAndInPlay(id))) {
@@ -130,7 +137,6 @@ public class Restrictions {
         // Rune pouch slots behave like inventory providers
         EnumComposition pouchEnum = client.getEnum(EnumID.RUNEPOUCH_RUNE);
         if (pouchEnum != null) {
-            ItemManager im = plugin.getItemManager();
             for (int i = 0; i < RUNE_POUCH_AMOUNT_VARBITS.length; i++) {
                 int qty = client.getVarbitValue(RUNE_POUCH_AMOUNT_VARBITS[i]);
                 if (qty <= 0) continue;
@@ -193,7 +199,7 @@ public class Restrictions {
     }
 
     /**
-     * Validates that every rune listed by the given requirement overlay is tracked, unlocked, and currently provided.
+     * Validates that every rune listed by the given requirement overlay is tracked and currently provided.
      */
     public boolean processChildren(Widget widget) {
         Widget[] children = widget.getDynamicChildren();
@@ -208,9 +214,6 @@ public class Restrictions {
             int id = im.canonicalize(rawId);
 
             if (!plugin.isInPlay(id)) return false;
-
-            String base = itemsRepo.getBaseForId(id);
-            if (base == null || !unlocks.isBaseUnlocked(base)) return false;
 
             if (!availableRunes.contains(id)) return false;
         }
