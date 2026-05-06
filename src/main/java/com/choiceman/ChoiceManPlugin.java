@@ -242,11 +242,7 @@ public class ChoiceManPlugin extends Plugin {
     @Override
     protected void startUp() {
         ensureCustomItemsTemplateExists();
-
-        // Startup prefers synced custom JSON so the default template does not override cloud-synced data.
         reloadItemRepository(false);
-
-        eventBus.register(this);
 
         if (isNormalWorld()) {
             enableFeatures();
@@ -258,8 +254,6 @@ public class ChoiceManPlugin extends Plugin {
         if (featuresActive) {
             disableFeatures();
         }
-
-        eventBus.unregister(this);
     }
 
     /**
