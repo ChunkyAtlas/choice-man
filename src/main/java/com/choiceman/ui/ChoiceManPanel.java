@@ -8,40 +8,47 @@ import net.runelite.client.ui.PluginPanel;
 import javax.swing.*;
 import javax.swing.border.*;
 import java.awt.*;
+import java.awt.event.KeyAdapter;
+import java.awt.event.KeyEvent;
 import java.awt.image.BufferedImage;
 import java.util.*;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Choice Man side panel UI that mirrors Chance Man’s look-and-feel.
- * Shows two list views of base names (unlocked and obtained) with a search box and filters.
- * Rows render a representative item icon and the base name only.
+ * Choice Man side panel UI.
+ * Shows a searchable list of item bases from unlocked/obtained state.
  */
 public class ChoiceManPanel extends PluginPanel {
-    /**
-     * Caches a representative icon per base. Use a special sentinel to remember missing icons too.
-     */
     private static final ImageIcon NO_ICON = new ImageIcon(new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB));
+
     private static final Color PANEL_BG = new Color(37, 37, 37);
     private static final Color ROW_BG = new Color(60, 63, 65);
+    private static final Color ROW_SELECTED_BG = new Color(75, 78, 80);
     private static final Color TEXT_DEFAULT = new Color(220, 220, 220);
+    private static final Color BORDER_COLOR = new Color(80, 80, 80);
+    private static final Color SEARCH_BG = new Color(30, 30, 30);
+    private static final Color SEARCH_FIELD_BG = new Color(45, 45, 45);
+    private static final Map<ListMode, String> MODE_TOOLTIPS = Map.of(
+            ListMode.UNLOCKED, "Item bases you have unlocked.",
+            ListMode.OBTAINED, "Item bases you have obtained.",
+            ListMode.UNLOCKED_NOT_OBTAINED, "Item bases you have unlocked, but have not obtained yet.",
+            ListMode.UNLOCKED_AND_OBTAINED, "Item bases that are both unlocked and obtained."
+    );
     private final ItemsRepository repo;
     private final ChoiceManUnlocks unlocks;
     private final ItemManager itemManager;
-    private final JPanel centerCardPanel = new JPanel(new CardLayout());
-    private final DefaultListModel<String> unlockedModel = new DefaultListModel<>();
-    private final JList<String> unlockedList = new JList<>(unlockedModel);
-    private final DefaultListModel<String> obtainedModel = new DefaultListModel<>();
-    private final JList<String> obtainedList = new JList<>(obtainedModel);
-    private final JButton swapViewButton = new JButton("🔄");
-    private final JToggleButton filterUnlockedNotObtButton = new JToggleButton("🔓");
-    private final JToggleButton filterUnlockedAndObtButton = new JToggleButton("🔀");
-    private final JLabel countLabel = new JLabel("");
-    private final Map<String, ImageIcon> iconCache = new HashMap<>();
-    private final Map<String, Integer> repIdCache = new HashMap<>();
-    private String searchText = "";
-    private boolean showingUnlocked = true;
-    private Filter activeFilter = Filter.NONE;
+    private final Map<String, ImageIcon> iconCache = new ConcurrentHashMap<>();
+    private final Map<String, Integer> repIdCache = new ConcurrentHashMap<>();
+    private final JLabel modeLabel = new JLabel("Unlocked Items");
+    private final JTextField searchField = new JTextField();
+    private final DefaultListModel<String> listModel = new DefaultListModel<>();
+    private final JList<String> baseList = new JList<>(listModel);
+    private final JLabel countLabel = new JLabel("0/0");
+    private final JComboBox<ListMode> modeDropdown = new JComboBox<>(ListMode.values());
+    private volatile ListMode listMode = ListMode.UNLOCKED;
+    private volatile String searchText = "";
+
     public ChoiceManPanel(ItemsRepository repo, ChoiceManUnlocks unlocks, ItemManager itemManager) {
         this.repo = repo;
         this.unlocks = unlocks;
@@ -49,233 +56,306 @@ public class ChoiceManPanel extends PluginPanel {
         init();
     }
 
-    private static void styleButton(JButton b) {
-        b.setFocusPainted(false);
-        b.setBackground(new Color(60, 63, 65));
-        b.setForeground(Color.WHITE);
-        b.setFont(new Font("SansSerif", Font.BOLD, 12));
-        b.setPreferredSize(new Dimension(50, 30));
-    }
-
-    private static void styleToggle(JToggleButton b) {
-        b.setFocusPainted(false);
-        b.setBackground(new Color(60, 63, 65));
-        b.setForeground(Color.WHITE);
-        b.setFont(new Font("SansSerif", Font.BOLD, 12));
-        b.setPreferredSize(new Dimension(50, 30));
-    }
-
-    private static void styleList(JList<String> list) {
-        list.setVisibleRowCount(10);
-        list.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-    }
-
-    private static JPanel titled(String title, Component content) {
-        JPanel container = new JPanel(new BorderLayout());
-        container.setOpaque(false);
-        Border line = new LineBorder(new Color(80, 80, 80));
-        Border empty = new EmptyBorder(5, 5, 5, 5);
-        TitledBorder titled = BorderFactory.createTitledBorder(line, title);
-        titled.setTitleColor(new Color(200, 200, 200));
-        container.setBorder(new CompoundBorder(titled, empty));
-        container.add(content, BorderLayout.CENTER);
-        return container;
-    }
-
     private void init() {
         setLayout(new BorderLayout());
-        setBorder(new EmptyBorder(15, 15, 15, 15));
+        setBorder(new EmptyBorder(12, 12, 12, 12));
         setBackground(PANEL_BG);
 
-        JPanel top = new JPanel();
-        top.setLayout(new BoxLayout(top, BoxLayout.Y_AXIS));
-        top.setOpaque(false);
+        add(buildTop(), BorderLayout.NORTH);
+        add(buildCenter(), BorderLayout.CENTER);
+        add(buildBottom(), BorderLayout.SOUTH);
 
-        JPanel header = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
-        header.setOpaque(false);
-        JLabel title = new JLabel("Choice Man");
-        title.setFont(new Font("SansSerif", Font.BOLD, 18));
-        title.setForeground(TEXT_DEFAULT);
-        header.add(title);
-        top.add(header);
-        top.add(Box.createVerticalStrut(10));
+        baseList.setFixedCellHeight(36);
+        baseList.setVisibleRowCount(-1);
+        baseList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        baseList.setCellRenderer(new BaseCellRenderer());
 
-        top.add(buildSearchBar());
-        top.add(Box.createVerticalStrut(10));
-
-        JPanel row = new JPanel(new GridLayout(1, 3, 10, 0));
-        row.setOpaque(false);
-        styleButton(swapViewButton);
-        styleToggle(filterUnlockedNotObtButton);
-        styleToggle(filterUnlockedAndObtButton);
-
-        swapViewButton.setToolTipText("Swap between Unlocked and Obtained views");
-        swapViewButton.addActionListener(e -> {
-            showingUnlocked = !showingUnlocked;
-            CardLayout cl = (CardLayout) centerCardPanel.getLayout();
-            cl.show(centerCardPanel, showingUnlocked ? "UNLOCKED" : "OBTAINED");
-            updatePanel();
-        });
-
-        filterUnlockedNotObtButton.setToolTipText("Filter: Unlocked ∧ Not Obtained");
-        filterUnlockedNotObtButton.addActionListener(e -> {
-            if (filterUnlockedNotObtButton.isSelected()) {
-                activeFilter = Filter.UNLOCKED_NOT_OBTAINED;
-                filterUnlockedAndObtButton.setSelected(false);
-            } else activeFilter = Filter.NONE;
-            updatePanel();
-        });
-
-        filterUnlockedAndObtButton.setToolTipText("Filter: Unlocked ∧ Obtained");
-        filterUnlockedAndObtButton.addActionListener(e -> {
-            if (filterUnlockedAndObtButton.isSelected()) {
-                activeFilter = Filter.UNLOCKED_AND_OBTAINED;
-                filterUnlockedNotObtButton.setSelected(false);
-            } else activeFilter = Filter.NONE;
-            updatePanel();
-        });
-
-        row.add(swapViewButton);
-        row.add(filterUnlockedNotObtButton);
-        row.add(filterUnlockedAndObtButton);
-        top.add(row);
-        top.add(Box.createVerticalStrut(10));
-        add(top, BorderLayout.NORTH);
-
-        styleList(unlockedList);
-        styleList(obtainedList);
-
-        JScrollPane unlockedScroll = new JScrollPane(unlockedList,
-                JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED,
-                JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
-        unlockedScroll.setPreferredSize(new Dimension(250, 300));
-        JPanel unlockedContainer = titled("Unlocked", unlockedScroll);
-
-        JScrollPane obtainedScroll = new JScrollPane(obtainedList,
-                JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED,
-                JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
-        obtainedScroll.setPreferredSize(new Dimension(250, 300));
-        JPanel obtainedContainer = titled("Obtained", obtainedScroll);
-
-        centerCardPanel.add(unlockedContainer, "UNLOCKED");
-        centerCardPanel.add(obtainedContainer, "OBTAINED");
-        ((CardLayout) centerCardPanel.getLayout()).show(centerCardPanel, "UNLOCKED");
-        add(centerCardPanel, BorderLayout.CENTER);
-
-        JPanel bottom = new JPanel();
-        bottom.setLayout(new BoxLayout(bottom, BoxLayout.Y_AXIS));
-        bottom.setOpaque(false);
-
-        JPanel countRow = new JPanel(new FlowLayout(FlowLayout.CENTER, 0, 0));
-        countRow.setOpaque(false);
-        countLabel.setFont(new Font("Arial", Font.BOLD, 11));
-        countLabel.setForeground(TEXT_DEFAULT);
-        countRow.add(countLabel);
-        bottom.add(countRow);
-
-        add(bottom, BorderLayout.SOUTH);
-
-        unlockedList.setCellRenderer(new BaseCellRenderer());
-        obtainedList.setCellRenderer(new BaseCellRenderer());
-
+        setMode(ListMode.UNLOCKED);
         updatePanel();
     }
 
-    private JPanel buildSearchBar() {
-        JPanel wrap = new JPanel(new BorderLayout());
-        wrap.setOpaque(false);
-        wrap.setBorder(new EmptyBorder(5, 5, 5, 5));
+    private JPanel buildTop() {
+        JPanel top = new JPanel();
+        top.setOpaque(false);
+        top.setLayout(new BoxLayout(top, BoxLayout.Y_AXIS));
 
-        JPanel box = new JPanel(new BorderLayout());
-        box.setBackground(new Color(30, 30, 30));
-        box.setBorder(BorderFactory.createEmptyBorder(2, 6, 2, 6));
+        top.add(buildHeaderRow());
+        top.add(Box.createVerticalStrut(10));
+        top.add(buildDropdownRow());
+        top.add(Box.createVerticalStrut(8));
+        top.add(buildModeLabelRow());
+        top.add(Box.createVerticalStrut(10));
+        top.add(buildSearchBar());
 
-        JLabel icon = new JLabel("\uD83D\uDD0D");
-        icon.setForeground(new Color(200, 200, 200));
-        box.add(icon, BorderLayout.WEST);
+        return top;
+    }
 
-        JTextField field = new JTextField();
-        field.setBackground(new Color(45, 45, 45));
-        field.setForeground(Color.WHITE);
-        field.setBorder(null);
-        field.setCaretColor(Color.WHITE);
-        field.addKeyListener(new java.awt.event.KeyAdapter() {
+    private JPanel buildHeaderRow() {
+        JPanel headerPanel = new JPanel(new BorderLayout());
+        headerPanel.setOpaque(false);
+
+        JLabel iconLabel = new JLabel();
+        try {
+            java.net.URL iconUrl = getClass().getResource("/net/runelite/client/plugins/choiceman/icon.png");
+            if (iconUrl != null) {
+                iconLabel.setIcon(new ImageIcon(iconUrl));
+            }
+        } catch (Exception ignored) {
+        }
+
+        JLabel titleLabel = new JLabel("Choice Man", SwingConstants.CENTER);
+        titleLabel.setFont(new Font("SansSerif", Font.BOLD, 18));
+        titleLabel.setForeground(TEXT_DEFAULT);
+
+        headerPanel.add(iconLabel, BorderLayout.WEST);
+        headerPanel.add(titleLabel, BorderLayout.CENTER);
+
+        return headerPanel;
+    }
+
+    private JPanel buildDropdownRow() {
+        JPanel row = new JPanel(new BorderLayout());
+        row.setOpaque(false);
+
+        modeDropdown.setFocusable(false);
+        modeDropdown.setBackground(ROW_BG);
+        modeDropdown.setForeground(Color.WHITE);
+        modeDropdown.setFont(new Font("SansSerif", Font.BOLD, 12));
+        modeDropdown.setBorder(new CompoundBorder(
+                new LineBorder(BORDER_COLOR),
+                new EmptyBorder(2, 6, 2, 6))
+        );
+
+        modeDropdown.setRenderer(new DefaultListCellRenderer() {
             @Override
-            public void keyReleased(java.awt.event.KeyEvent e) {
-                SwingUtilities.invokeLater(() -> {
-                    searchText = field.getText().toLowerCase(Locale.ROOT);
-                    updatePanel();
-                });
+            public Component getListCellRendererComponent(
+                    JList<?> list,
+                    Object value,
+                    int index,
+                    boolean isSelected,
+                    boolean cellHasFocus) {
+                JLabel label = (JLabel) super.getListCellRendererComponent(
+                        list, value, index, isSelected, cellHasFocus);
+
+                label.setBorder(new EmptyBorder(4, 6, 4, 6));
+
+                if (value instanceof ListMode) {
+                    ListMode mode = (ListMode) value;
+                    label.setText(index == -1 ? "Filter: " + mode.label() : mode.label());
+
+                    String tooltip = MODE_TOOLTIPS.get(mode);
+                    label.setToolTipText(tooltip);
+                    modeDropdown.setToolTipText(tooltip);
+                } else {
+                    label.setToolTipText(null);
+                }
+
+                label.setBackground(isSelected ? ROW_SELECTED_BG : ROW_BG);
+                label.setForeground(Color.WHITE);
+
+                return label;
             }
         });
-        box.add(field, BorderLayout.CENTER);
 
-        JLabel clear = new JLabel("❌");
-        clear.setFont(new Font("SansSerif", Font.PLAIN, 9));
-        clear.setForeground(Color.RED);
-        clear.setBorder(new EmptyBorder(0, 6, 0, 6));
-        clear.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        clear.addMouseListener(new java.awt.event.MouseAdapter() {
-            @Override
-            public void mouseClicked(java.awt.event.MouseEvent e) {
-                field.setText("");
-                searchText = "";
+        modeDropdown.addActionListener(e ->
+        {
+            Object selected = modeDropdown.getSelectedItem();
+            if (selected instanceof ListMode) {
+                setMode((ListMode) selected);
                 updatePanel();
             }
         });
-        box.add(clear, BorderLayout.EAST);
 
-        wrap.add(box, BorderLayout.CENTER);
+        row.add(modeDropdown, BorderLayout.CENTER);
+        return row;
+    }
+
+    private JPanel buildModeLabelRow() {
+        JPanel row = new JPanel(new BorderLayout());
+        row.setOpaque(false);
+
+        modeLabel.setFont(new Font("SansSerif", Font.BOLD, 12));
+        modeLabel.setForeground(new Color(210, 210, 210));
+
+        row.add(modeLabel, BorderLayout.WEST);
+        return row;
+    }
+
+    private JPanel buildSearchBar() {
+        JPanel container = new JPanel(new BorderLayout());
+        container.setOpaque(false);
+
+        JPanel searchBox = new JPanel(new BorderLayout());
+        searchBox.setBackground(SEARCH_BG);
+        searchBox.setBorder(BorderFactory.createEmptyBorder(6, 8, 6, 8));
+
+        JLabel icon = new JLabel("\uD83D\uDD0D");
+        icon.setForeground(new Color(200, 200, 200));
+        icon.setBorder(new EmptyBorder(0, 0, 0, 6));
+        searchBox.add(icon, BorderLayout.WEST);
+
+        searchField.setBackground(SEARCH_FIELD_BG);
+        searchField.setForeground(Color.WHITE);
+        searchField.setBorder(null);
+        searchField.setCaretColor(Color.WHITE);
+
+        searchField.addKeyListener(new KeyAdapter() {
+            @Override
+            public void keyReleased(KeyEvent e) {
+                searchText = searchField.getText().toLowerCase(Locale.ROOT);
+                updatePanel();
+            }
+        });
+
+        searchBox.add(searchField, BorderLayout.CENTER);
+
+        JButton clearButton = new JButton("x");
+        clearButton.setFocusable(false);
+        clearButton.setBorder(null);
+        clearButton.setOpaque(false);
+        clearButton.setContentAreaFilled(false);
+        clearButton.setForeground(new Color(220, 80, 80));
+        clearButton.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        clearButton.setToolTipText("Clear search");
+        clearButton.addActionListener(e ->
+        {
+            searchField.setText("");
+            searchText = "";
+            updatePanel();
+        });
+
+        searchBox.add(clearButton, BorderLayout.EAST);
+
+        container.add(searchBox, BorderLayout.CENTER);
+        return container;
+    }
+
+    private JPanel buildCenter() {
+        JScrollPane scroll = new JScrollPane(
+                baseList,
+                JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED,
+                JScrollPane.HORIZONTAL_SCROLLBAR_NEVER
+        );
+        scroll.setBorder(null);
+
+        JPanel wrap = new JPanel(new BorderLayout());
+        wrap.setOpaque(false);
+        wrap.setBorder(new CompoundBorder(
+                new LineBorder(BORDER_COLOR),
+                new EmptyBorder(6, 6, 6, 6))
+        );
+
+        wrap.add(scroll, BorderLayout.CENTER);
         return wrap;
     }
 
+    private JPanel buildBottom() {
+        JPanel bottom = new JPanel();
+        bottom.setOpaque(false);
+        bottom.setLayout(new BoxLayout(bottom, BoxLayout.Y_AXIS));
+
+        bottom.add(Box.createVerticalStrut(10));
+
+        JPanel countPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 0, 0));
+        countPanel.setOpaque(false);
+
+        countLabel.setFont(new Font("Arial", Font.BOLD, 11));
+        countLabel.setForeground(TEXT_DEFAULT);
+
+        countPanel.add(countLabel);
+        bottom.add(countPanel);
+        bottom.add(Box.createVerticalStrut(4));
+
+        return bottom;
+    }
+
+    private void setMode(ListMode mode) {
+        listMode = mode;
+
+        String tooltip = MODE_TOOLTIPS.get(mode);
+        modeDropdown.setToolTipText(tooltip);
+
+        switch (mode) {
+            case UNLOCKED:
+                modeLabel.setText("Unlocked Items");
+                break;
+
+            case OBTAINED:
+                modeLabel.setText("Obtained Items");
+                break;
+
+            case UNLOCKED_NOT_OBTAINED:
+                modeLabel.setText("Unlocked, not Obtained");
+                break;
+
+            case UNLOCKED_AND_OBTAINED:
+                modeLabel.setText("Unlocked and Obtained");
+                break;
+        }
+    }
+
     /**
-     * External hook from the plugin to refresh the lists after state changes.
-     * Safe to call from any thread, updates are marshaled to the EDT. :contentReference[oaicite:1]{index=1}
+     * External hook from the plugin to refresh the list after state changes.
      */
     public void refresh(ChoiceManUnlocks u) {
         updatePanel();
     }
 
     /**
-     * Builds filtered snapshots off-EDT, then applies model updates on the EDT.
+     * Builds filtered snapshots, then applies model updates on the EDT.
      */
     public void updatePanel() {
+        final ListMode modeSnapshot = listMode;
+        final String searchSnapshot = searchText;
+
         List<String> unlocked = new ArrayList<>(unlocks.unlockedList());
         List<String> obtained = new ArrayList<>(unlocks.obtainedList());
+
         Set<String> unlockedSet = new HashSet<>(unlocked);
         Set<String> obtainedSet = new HashSet<>(obtained);
 
-        if (!searchText.isEmpty()) {
-            final String q = searchText;
-            unlocked.removeIf(s -> !s.toLowerCase(Locale.ROOT).contains(q));
-            obtained.removeIf(s -> !s.toLowerCase(Locale.ROOT).contains(q));
+        List<String> base = new ArrayList<>();
+
+        switch (modeSnapshot) {
+            case UNLOCKED:
+                base.addAll(unlocked);
+                break;
+
+            case OBTAINED:
+                base.addAll(obtained);
+                break;
+
+            case UNLOCKED_NOT_OBTAINED:
+                base.addAll(unlocked);
+                base.removeIf(obtainedSet::contains);
+                break;
+
+            case UNLOCKED_AND_OBTAINED:
+                base.addAll(unlocked);
+                base.removeIf(s -> !obtainedSet.contains(s));
+                break;
         }
 
-        if (activeFilter == Filter.UNLOCKED_NOT_OBTAINED) {
-            unlocked.removeIf(obtainedSet::contains);
-            obtained.clear();
-        } else if (activeFilter == Filter.UNLOCKED_AND_OBTAINED) {
-            unlocked.removeIf(s -> !obtainedSet.contains(s));
-            obtained.removeIf(s -> !unlockedSet.contains(s));
+        if (searchSnapshot != null && !searchSnapshot.isEmpty()) {
+            base.removeIf(s -> !s.toLowerCase(Locale.ROOT).contains(searchSnapshot));
         }
 
-        unlocked.sort(String::compareToIgnoreCase);
-        obtained.sort(String::compareToIgnoreCase);
+        base.sort(String::compareToIgnoreCase);
 
-        SwingUtilities.invokeLater(() -> {
-            unlockedModel.clear();
-            obtainedModel.clear();
-            for (String s : unlocked) unlockedModel.addElement(s);
-            for (String s : obtained) obtainedModel.addElement(s);
+        int totalBases = repo.getAllBases().size();
 
-            int totalBases = repo.getAllBases().size();
-            countLabel.setText(showingUnlocked
-                    ? "Unlocked: " + unlockedModel.size() + "/" + totalBases
-                    : "Obtained: " + obtainedModel.size() + "/" + totalBases);
+        SwingUtilities.invokeLater(() ->
+        {
+            listModel.clear();
 
-            CardLayout cl = (CardLayout) centerCardPanel.getLayout();
-            cl.show(centerCardPanel, showingUnlocked ? "UNLOCKED" : "OBTAINED");
+            for (String s : base) {
+                listModel.addElement(s);
+            }
+
+            countLabel.setText(base.size() + "/" + totalBases);
+
+            baseList.revalidate();
+            baseList.repaint();
         });
     }
 
@@ -285,7 +365,9 @@ public class ChoiceManPanel extends PluginPanel {
      */
     private ImageIcon getBaseIcon(String base) {
         ImageIcon cached = iconCache.get(base);
-        if (cached != null) return cached == NO_ICON ? null : cached;
+        if (cached != null) {
+            return cached == NO_ICON ? null : cached;
+        }
 
         Set<Integer> ids = repo.getIdsForBase(base);
         if (ids == null || ids.isEmpty()) {
@@ -293,13 +375,13 @@ public class ChoiceManPanel extends PluginPanel {
             return null;
         }
 
-        int rep = repIdCache.computeIfAbsent(base, b -> ids.stream().min(Integer::compareTo).orElse(0));
-        if (rep <= 0) {
+        int representativeId = repIdCache.computeIfAbsent(base, b -> ids.stream().min(Integer::compareTo).orElse(0));
+        if (representativeId <= 0) {
             iconCache.put(base, NO_ICON);
             return null;
         }
 
-        BufferedImage img = itemManager.getImage(rep, 1, false);
+        BufferedImage img = itemManager.getImage(representativeId, 1, false);
         if (img == null) {
             iconCache.put(base, NO_ICON);
             return null;
@@ -310,10 +392,52 @@ public class ChoiceManPanel extends PluginPanel {
         return icon;
     }
 
-    private enum Filter {
-        NONE,
-        UNLOCKED_NOT_OBTAINED,
-        UNLOCKED_AND_OBTAINED
+    @Override
+    public Dimension getPreferredSize() {
+        Dimension d = super.getPreferredSize();
+        int viewportHeight = getViewportHeight();
+
+        if (viewportHeight > 0 && d.height < viewportHeight) {
+            return new Dimension(d.width, viewportHeight);
+        }
+
+        return d;
+    }
+
+    private int getViewportHeight() {
+        Container parent = getParent();
+
+        while (parent != null && !(parent instanceof JViewport)) {
+            parent = parent.getParent();
+        }
+
+        if (parent != null) {
+            return Math.max(((JViewport) parent).getHeight(), 0);
+        }
+
+        return 0;
+    }
+
+    private enum ListMode {
+        UNLOCKED("Unlocked"),
+        OBTAINED("Obtained"),
+        UNLOCKED_NOT_OBTAINED("Unlocked, not Obtained"),
+        UNLOCKED_AND_OBTAINED("Unlocked and Obtained");
+
+        private final String label;
+
+        ListMode(String label) {
+            this.label = label;
+        }
+
+        public String label() {
+            return label;
+        }
+
+        @Override
+        public String toString() {
+            return label;
+        }
     }
 
     private class BaseCellRenderer extends JPanel implements ListCellRenderer<String> {
@@ -321,10 +445,14 @@ public class ChoiceManPanel extends PluginPanel {
         private final JLabel nameLabel = new JLabel();
 
         BaseCellRenderer() {
-            setLayout(new BorderLayout(6, 0));
+            setLayout(new BorderLayout(8, 0));
             setOpaque(true);
+
+            iconLabel.setPreferredSize(new Dimension(32, 32));
+
             add(iconLabel, BorderLayout.WEST);
             add(nameLabel, BorderLayout.CENTER);
+
             nameLabel.setFont(new Font("SansSerif", Font.PLAIN, 11));
         }
 
@@ -336,20 +464,15 @@ public class ChoiceManPanel extends PluginPanel {
                 boolean isSelected,
                 boolean cellHasFocus) {
             iconLabel.setIcon(getBaseIcon(base));
+            iconLabel.setToolTipText(base);
+
             nameLabel.setText(base);
             nameLabel.setToolTipText(base);
-            iconLabel.setToolTipText(base);
-            setToolTipText(base);
 
-            if (isSelected) {
-                setBackground(list.getSelectionBackground());
-                setForeground(list.getSelectionForeground());
-                nameLabel.setForeground(list.getSelectionForeground());
-            } else {
-                setBackground(ROW_BG);
-                setForeground(TEXT_DEFAULT);
-                nameLabel.setForeground(TEXT_DEFAULT);
-            }
+            setToolTipText(base);
+            setBackground(isSelected ? ROW_SELECTED_BG : ROW_BG);
+            nameLabel.setForeground(TEXT_DEFAULT);
+
             return this;
         }
     }
