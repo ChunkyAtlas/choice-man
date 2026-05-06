@@ -35,13 +35,11 @@ public final class UnlocksTabUI {
      */
     public void startUp() {
         if (!registered.compareAndSet(false, true)) {
-            return; // already started
+            return;
         }
 
         eventBus.register(button);
         eventBus.register(tabListener);
-
-        // Schedule placing the icon; the button already defers to the client thread.
         button.onStart();
     }
 
@@ -51,10 +49,8 @@ public final class UnlocksTabUI {
      */
     public void shutDown() {
         if (!registered.compareAndSet(true, false)) {
-            return; // not started
+            return;
         }
-
-        // Ensure the button hides itself before we drop listeners
         button.onStop();
 
         eventBus.unregister(tabListener);

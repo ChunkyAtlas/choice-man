@@ -92,7 +92,7 @@ public class ItemDimmerController {
             if (rawItemId > 0) {
                 final int target = shouldDim(rawItemId) ? dimOpacity : 0;
                 if (w.getOpacity() != target) {
-                    w.setOpacity(target); // 0 = opaque, 255 = transparent
+                    w.setOpacity(target);
                 }
             }
 

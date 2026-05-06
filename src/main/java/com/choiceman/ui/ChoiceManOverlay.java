@@ -520,8 +520,6 @@ public class ChoiceManOverlay extends Overlay {
         return new Dimension(totalW, totalH);
     }
 
-    // Helpers
-
     /**
      * @param idx card index
      * @return true when a card has fully completed its reveal animation and is eligible for hover/select.

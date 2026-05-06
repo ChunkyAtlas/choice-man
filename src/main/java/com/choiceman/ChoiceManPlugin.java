@@ -39,7 +39,7 @@ import java.util.stream.Collectors;
 
 /**
  * Main plugin. Tracks level-ups, presents unlock choices, dims/blocks locked items,
- * and integrates with the Music tab. Uses RuneLite's injected Gson for persistence.
+ * and integrates with the Music tab.
  */
 @PluginDescriptor(
         name = "Choice Man",
@@ -53,7 +53,6 @@ public class ChoiceManPlugin extends Plugin {
     private static final int GE_RESULTS_CHILD = 51;
     private static final String COL_RESET = "</col>";
     private static final Skill[] TRACKED_SKILLS = java.util.Arrays.stream(Skill.values())
-            .filter(s -> s != Skill.OVERALL)
             .toArray(Skill[]::new);
 
     /**
@@ -81,7 +80,7 @@ public class ChoiceManPlugin extends Plugin {
     @Inject
     private ItemManager itemManager;
     @Inject
-    private Gson gson; // RuneLite's Gson
+    private Gson gson;
     @Inject
     private ChoiceManConfig config;
     @Inject
@@ -108,7 +107,6 @@ public class ChoiceManPlugin extends Plugin {
     private NavigationButton navButton;
     private MouseListener overlayMouse;
     private volatile Integer forcedOfferCount = null;
-    // client-thread-guarded state (visibility via volatile)
     private volatile boolean featuresActive = false;
     private volatile int lastKnownTotal = -1;
     private volatile boolean baselineReady = false;
@@ -613,7 +611,6 @@ public class ChoiceManPlugin extends Plugin {
         final int currentChoices = choiceCountForTotal(currentTotal);
         final int next = nextThreshold(currentTotal);
 
-        // Black brackets + darker blue label
         final String prefix = black("[") + blue("Choice Man") + black("] ");
 
         if (next == -1) {

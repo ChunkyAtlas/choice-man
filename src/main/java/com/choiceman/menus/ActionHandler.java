@@ -191,16 +191,13 @@ public class ActionHandler {
 
     @Subscribe
     public void onMenuOptionClicked(MenuOptionClicked event) {
-        // Row was already disabled in onMenuEntryAdded
         if (event.getMenuEntry().onClick() == DISABLED) {
             event.consume();
             return;
         }
 
-        // 1) Guard picking up tracked-but-locked ground items
         handleGroundItems(itemManager, unlocks, itemsRepo, event, plugin);
 
-        // 2) Block "use item on ..." only when an actual item is being used
         final MenuEntry entry = event.getMenuEntry();
         final MenuAction action = entry.getType();
 
@@ -218,13 +215,12 @@ public class ActionHandler {
             }
         }
 
-        // 3) Extra safety for item-based rows only (skip NPC/object-only rows).
         if (entry.getItemId() > 0 && !GROUND_ACTIONS.contains(action)) {
             final String option = Text.removeTags(entry.getOption());
 
             // Always allow these safe ops
             if (equalsAny(option, "drop", "destroy", "release", "examine")) {
-                return; // let it through
+                return;
             }
 
             // While bank/deposit UI is open, allow benign banking ops
@@ -275,7 +271,6 @@ public class ActionHandler {
         if (Spell.isSpell(option)) return restrictions.isSpellOpEnabled(option);
         if (Spell.isSpell(target)) return restrictions.isSpellOpEnabled(target);
 
-        // If this row doesn't reference an item, don't interfere
         if (id <= 0) return true;
 
         // Ignore untracked items
@@ -286,7 +281,6 @@ public class ActionHandler {
         final boolean baseUsable = base != null && unlocks.isBaseUsable(base);
 
         if (enabledUiOpen()) {
-            // While bank/deposit UI is open, only allow these ops
             return option.startsWith("Deposit")
                     || option.startsWith("Withdraw")
                     || option.startsWith("Examine")
@@ -295,7 +289,6 @@ public class ActionHandler {
         }
 
         if (!baseUsable) {
-            // Locked tracked item: allow only safe ops
             return equalsAny(option, "examine", "drop", "destroy", "release");
         }
 

@@ -19,8 +19,8 @@ import javax.inject.Singleton;
  */
 @Singleton
 public class TabListener {
-    private static final int MUSIC_TAB = 13; // VarClientInt value when the Music tab is selected
-    private static final int VARC_INV_TAB = 171; // Index of the VarClientInt controlling the inventory tab selector
+    private static final int MUSIC_TAB = 13;
+    private static final int VARC_INV_TAB = 171;
 
     private final Client client;
     private final ClientThread clientThread;

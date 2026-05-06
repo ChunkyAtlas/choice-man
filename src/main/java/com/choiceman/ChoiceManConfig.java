@@ -7,10 +7,6 @@ import net.runelite.client.config.ConfigItem;
 
 import java.awt.Color;
 
-/**
- * Choice Man user settings.
- * Only contains live features (no test toggles).
- */
 @ConfigGroup("choiceman")
 public interface ChoiceManConfig extends Config
 {

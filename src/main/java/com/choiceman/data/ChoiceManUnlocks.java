@@ -150,7 +150,6 @@ public class ChoiceManUnlocks {
                 obtainedBases.retainAll(allowed);
             }
         } catch (Exception ignored) {
-            // Fail-safe: unreadable files should not disrupt runtime behavior
         }
     }
 

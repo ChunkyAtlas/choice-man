@@ -324,8 +324,6 @@ public final class UnlocksWidgetController
         return out;
     }
 
-    // internals
-
     /**
      * If the override is currently visible, rebuild it to reflect latest state.
      */
@@ -829,7 +827,6 @@ public final class UnlocksWidgetController
     private void runOnLoad(Widget w)
     {
         if (w == null || w.getOnLoadListener() == null) return;
-        client.createScriptEvent(w.getOnLoadListener()).setSource(w).run();
         w.revalidate();
     }
 

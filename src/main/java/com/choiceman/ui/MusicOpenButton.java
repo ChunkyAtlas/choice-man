@@ -44,7 +44,6 @@ public class MusicOpenButton {
     @Getter
     private volatile boolean overrideActive = false;
 
-    // cache last placement to avoid unnecessary revalidate spam
     private int lastX = Integer.MIN_VALUE;
     private int lastY = Integer.MIN_VALUE;
 

@@ -46,7 +46,7 @@ public class UnlocksTooltipOverlay extends Overlay {
             return null;
         }
 
-        final Point mouse = client.getMouseCanvasPosition(); // canvas-space mouse
+        final Point mouse = client.getMouseCanvasPosition();
         if (mouse == null) {
             return null;
         }
@@ -60,7 +60,7 @@ public class UnlocksTooltipOverlay extends Overlay {
                 continue;
             }
 
-            final Rectangle bounds = w.getBounds(); // canvas-space bounds of the widget :contentReference[oaicite:2]{index=2}
+            final Rectangle bounds = w.getBounds();
             if (bounds == null) {
                 continue;
             }
