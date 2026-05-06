@@ -30,12 +30,18 @@ import net.runelite.client.util.ImageUtil;
 import javax.inject.Inject;
 import javax.swing.*;
 import java.awt.image.BufferedImage;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Collections;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
+
+import static net.runelite.client.RuneLite.RUNELITE_DIR;
 
 /**
  * Main plugin. Tracks level-ups, presents unlock choices, dims/blocks locked items,
@@ -52,6 +58,60 @@ public class ChoiceManPlugin extends Plugin {
     private static final int GE_GROUP_ID = 162;
     private static final int GE_RESULTS_CHILD = 51;
     private static final String COL_RESET = "</col>";
+
+    private static final String CONFIG_GROUP = "choiceman";
+    private static final String CUSTOM_ITEMS_DATA_KEY = "customItems.data";
+    private static final String CUSTOM_ITEMS_TIMESTAMP_KEY = "customItems.timestamp";
+    private static final String CUSTOM_ITEMS_DIR = "choiceman";
+    private static final String CUSTOM_ITEMS_FILE = "custom_items.json";
+    private static final String CUSTOM_ITEMS_README_FILE = "custom_items_README.txt";
+
+    private static final String DEFAULT_CUSTOM_ITEMS_TEMPLATE = String.join("\n",
+            "[",
+            "  {",
+            "    \"name\": \"Example item - Abyssal whip\",",
+            "    \"ids\": [4151]",
+            "  },",
+            "  {",
+            "    \"name\": \"Example item - Dragon scimitar\",",
+            "    \"ids\": [4587]",
+            "  },",
+            "  {",
+            "    \"name\": \"Example item with variants\",",
+            "    \"ids\": [11802, 11804, 11806, 11808]",
+            "  }",
+            "]",
+            ""
+    );
+
+    private static final String CUSTOM_ITEMS_README = String.join("\n",
+            "Choice Man custom item list",
+            "",
+            "Edit custom_items.json to define your own item pool.",
+            "",
+            "Format:",
+            "[",
+            "  {",
+            "    \"name\": \"Abyssal whip\",",
+            "    \"ids\": [4151]",
+            "  },",
+            "  {",
+            "    \"name\": \"Dragon scimitar\",",
+            "    \"ids\": [4587]",
+            "  }",
+            "]",
+            "",
+            "Rules:",
+            "- The file must be valid JSON.",
+            "- The root value must be an array.",
+            "- Each item needs a non-empty name.",
+            "- Each item needs ids as a non-empty array of positive OSRS item IDs.",
+            "- Use multiple IDs for variants if you want them treated as the same base item.",
+            "- After editing this file, toggle 'Use custom item list' off/on in the Choice Man config.",
+            "- Valid custom lists are saved to RuneLite config so they can sync across profiles/machines.",
+            ""
+    );
+
     private static final Skill[] TRACKED_SKILLS = java.util.Arrays.stream(Skill.values())
             .toArray(Skill[]::new);
 
@@ -59,53 +119,79 @@ public class ChoiceManPlugin extends Plugin {
      * Queue of pending presentations across callbacks.
      */
     private final AtomicInteger pendingChoices = new AtomicInteger(0);
+
     /**
      * How many of the pending presentations are milestone (200/500/1000) and should use gold BG.
      */
     private final AtomicInteger pendingMilestoneChoices = new AtomicInteger(0);
+
     private final AtomicInteger pendingAutoMinimizeChoices = new AtomicInteger(0);
+
     @Inject
     private Client client;
+
     @Inject
     private ClientThread clientThread;
+
     @Inject
     private EventBus eventBus;
+
     @Inject
     private ClientToolbar clientToolbar;
+
     @Inject
     private OverlayManager overlayManager;
+
     @Inject
     private MouseManager mouseManager;
+
     @Getter
     @Inject
     private ItemManager itemManager;
+
     @Inject
     private Gson gson;
+
+    @Inject
+    private ConfigManager configManager;
+
     @Inject
     private ChoiceManConfig config;
+
     @Inject
     private ChoiceManOverlay choiceManOverlay;
+
     @Inject
     private UnlocksTooltipOverlay unlocksTooltipOverlay;
+
     @Inject
     private ItemDimmerController itemDimmerController;
+
     @Inject
     private ActionHandler actionHandler;
+
     @Inject
     private Restrictions restrictions;
+
     @Inject
     private UnlocksWidgetController unlocksWidgetController;
+
     @Inject
     private ItemsRepository itemsRepo;
+
     @Inject
     private ChoiceManUnlocks unlocks;
+
     @Inject
     private UnlocksTabUI unlocksTabUI;
+
     @Inject
     private CombatMinimizer combatMinimizer;
+
     private ChoiceManPanel choiceManPanel;
     private NavigationButton navButton;
     private MouseListener overlayMouse;
+
     private volatile Integer forcedOfferCount = null;
     private volatile boolean featuresActive = false;
     private volatile int lastKnownTotal = -1;
@@ -155,8 +241,13 @@ public class ChoiceManPlugin extends Plugin {
 
     @Override
     protected void startUp() {
-        itemsRepo.loadFromResources(gson);
+        ensureCustomItemsTemplateExists();
+
+        // Startup prefers synced custom JSON so the default template does not override cloud-synced data.
+        reloadItemRepository(false);
+
         eventBus.register(this);
+
         if (isNormalWorld()) {
             enableFeatures();
         }
@@ -167,6 +258,7 @@ public class ChoiceManPlugin extends Plugin {
         if (featuresActive) {
             disableFeatures();
         }
+
         eventBus.unregister(this);
     }
 
@@ -175,6 +267,9 @@ public class ChoiceManPlugin extends Plugin {
      */
     private void enableFeatures() {
         if (featuresActive) return;
+
+        reloadItemRepository(false);
+
         featuresActive = true;
 
         unlocks.init(gson, itemsRepo);
@@ -196,12 +291,15 @@ public class ChoiceManPlugin extends Plugin {
                 "/com/choiceman/ui/panel_bg_gold.png",
                 itemManager, itemsRepo, unlocks
         );
+
         choiceManOverlay.setConfig(config);
+
         try {
             choiceManOverlay.setSfxVolumePercent(config.sfxVolume());
         } catch (Exception ex) {
             log.debug("Failed to set initial SFX volume", ex);
         }
+
         choiceManOverlay.setPendingCount(0);
 
         choiceManOverlay.setOnPick(baseName -> {
@@ -213,6 +311,7 @@ public class ChoiceManPlugin extends Plugin {
 
             // Live-refresh UI that depends on unlock state
             clientThread.invokeLater(() -> unlocksWidgetController.refreshIfActive());
+
             if (choiceManPanel != null) {
                 SwingUtilities.invokeLater(() -> choiceManPanel.refresh(unlocks));
             }
@@ -220,9 +319,11 @@ public class ChoiceManPlugin extends Plugin {
             // Advance the queue
             int remaining = pendingChoices.decrementAndGet();
             choiceManOverlay.setPendingCount(Math.max(0, remaining));
+
             if (remaining <= 0) {
                 forcedOfferCount = null; // return to normal (level-based) behavior
             }
+
             if (remaining > 0) {
                 clientThread.invoke(this::startChoiceIfNeeded);
             }
@@ -236,12 +337,15 @@ public class ChoiceManPlugin extends Plugin {
 
         itemDimmerController.setEnabled(config.dimLocked());
         itemDimmerController.setDimOpacity(config.dimOpacity());
+
         eventBus.register(itemDimmerController);
         eventBus.register(combatMinimizer);
+
         actionHandler.startUp();
         unlocksTabUI.startUp();
 
         choiceManPanel = new ChoiceManPanel(itemsRepo, unlocks, itemManager);
+
         BufferedImage icon = ImageUtil.loadImageResource(getClass(), "/net/runelite/client/plugins/choiceman/icon.png");
         navButton = NavigationButton.builder()
                 .tooltip("Choice Man")
@@ -249,7 +353,9 @@ public class ChoiceManPlugin extends Plugin {
                 .priority(5)
                 .panel(choiceManPanel)
                 .build();
+
         clientToolbar.addNavigation(navButton);
+
         SwingUtilities.invokeLater(() -> choiceManPanel.refresh(unlocks));
     }
 
@@ -258,6 +364,7 @@ public class ChoiceManPlugin extends Plugin {
      */
     private void disableFeatures() {
         if (!featuresActive) return;
+
         featuresActive = false;
 
         try {
@@ -265,21 +372,25 @@ public class ChoiceManPlugin extends Plugin {
         } catch (Exception ex) {
             log.debug("Restore unlocks view failed", ex);
         }
+
         try {
             actionHandler.shutDown();
         } catch (Exception ex) {
             log.debug("ActionHandler shutdown failed", ex);
         }
+
         try {
             eventBus.unregister(itemDimmerController);
         } catch (Exception ex) {
             log.debug("Unregister dimmer failed", ex);
         }
+
         try {
             eventBus.unregister(combatMinimizer);
         } catch (Exception ex) {
             log.debug("CombatMinimizer shutdown failed", ex);
         }
+
         try {
             unlocksTabUI.shutDown();
         } catch (Exception ex) {
@@ -312,6 +423,7 @@ public class ChoiceManPlugin extends Plugin {
                 navButton = null;
             }
         }
+
         choiceManPanel = null;
 
         pendingChoices.set(0);
@@ -338,6 +450,7 @@ public class ChoiceManPlugin extends Plugin {
     @Subscribe
     public void onGameStateChanged(GameStateChanged event) {
         if (!featuresActive) return;
+
         if (event.getGameState() == GameState.LOGGED_IN || event.getGameState() == GameState.LOGGING_IN) {
             baselineReady = false;
         }
@@ -361,6 +474,7 @@ public class ChoiceManPlugin extends Plugin {
         }
 
         final int current = computeTotalLevel();
+
         if (!baselineReady) {
             lastKnownTotal = current;
             baselineReady = true;
@@ -376,6 +490,7 @@ public class ChoiceManPlugin extends Plugin {
             if (lastKnownTotal < 200 && current >= 200) crossedMilestones++;
             if (lastKnownTotal < 500 && current >= 500) crossedMilestones++;
             if (lastKnownTotal < 1000 && current >= 1000) crossedMilestones++;
+
             if (crossedMilestones > 0) {
                 pendingMilestoneChoices.addAndGet(crossedMilestones);
             }
@@ -398,11 +513,19 @@ public class ChoiceManPlugin extends Plugin {
     }
 
     /**
-     * React to live config changes (dim/opacity/SFX/GE).
+     * React to live config changes (dim/opacity/SFX/GE/custom items).
      */
     @Subscribe
     public void onConfigChanged(net.runelite.client.events.ConfigChanged event) {
-        if (!featuresActive || !"choiceman".equals(event.getGroup())) return;
+        if (!CONFIG_GROUP.equals(event.getGroup())) return;
+
+        if ("useCustomItems".equals(event.getKey())) {
+            // Config toggle ON reads the local file immediately and syncs it if valid.
+            reloadItemRepositoryAndRefresh(true);
+            return;
+        }
+
+        if (!featuresActive) return;
 
         switch (event.getKey()) {
             case "dimLocked":
@@ -430,7 +553,7 @@ public class ChoiceManPlugin extends Plugin {
      */
     private void startChoiceIfNeeded() {
         if (pendingChoices.get() <= 0) return;
-        if (choiceManOverlay.isActive()) return; // already visible (minimized state shows count)
+        if (choiceManOverlay.isActive()) return;
 
         List<String> pool = itemsRepo.getAllBasesStillLocked(unlocks);
         if (pool.isEmpty()) {
@@ -444,11 +567,16 @@ public class ChoiceManPlugin extends Plugin {
         int offerCount = (forcedOfferCount != null)
                 ? Math.max(1, Math.min(5, forcedOfferCount))
                 : choiceCountForTotal(computeTotalLevel());
+
         Collections.shuffle(pool, ThreadLocalRandom.current());
-        List<String> offer = pool.stream().limit(Math.min(offerCount, pool.size())).collect(Collectors.toList());
+
+        List<String> offer = pool.stream()
+                .limit(Math.min(offerCount, pool.size()))
+                .collect(Collectors.toList());
 
         boolean milestone = false;
         int m = pendingMilestoneChoices.get();
+
         if (m > 0) {
             // consume one milestone flag for this presentation
             pendingMilestoneChoices.decrementAndGet();
@@ -470,13 +598,17 @@ public class ChoiceManPlugin extends Plugin {
     @Subscribe
     public void onItemContainerChanged(ItemContainerChanged event) {
         if (!featuresActive) return;
+
         if (event.getItemContainer() != null && event.getContainerId() == InventoryID.INV) {
             for (net.runelite.api.Item item : event.getItemContainer().getItems()) {
                 if (item == null) continue;
+
                 int canon = itemManager.canonicalize(item.getId());
                 String base = itemsRepo.getBaseForId(canon);
+
                 if (base != null && unlocks.markObtainedBaseIfFirst(base)) {
                     clientThread.invokeLater(() -> unlocksWidgetController.refreshIfActive());
+
                     if (choiceManPanel != null) {
                         SwingUtilities.invokeLater(() -> choiceManPanel.refresh(unlocks));
                     }
@@ -509,11 +641,11 @@ public class ChoiceManPlugin extends Plugin {
         if (showCount == null || showCount < 1 || showCount > 5) {
             addGameMessage(black("[") + blue("Choice Man") + black("] ")
                     + "Usage: ::roll " + red("N") + " unlocks " + black("[") + red("Q") + black("] ")
-                    + "(N = 1–5 cards per pick, optional Q = number of picks to queue).");
+                    + "(N = 1-5 cards per pick, optional Q = number of picks to queue).");
             return;
         }
 
-        int q = (queuedCount == null ? 1 : Math.max(1, Math.min(50, queuedCount))); // safety cap
+        int q = queuedCount == null ? 1 : Math.max(1, Math.min(50, queuedCount)); // safety cap
 
         // Build pool to ensure there is at least something to show
         List<String> allLocked = itemsRepo.getAllBasesStillLocked(unlocks);
@@ -530,7 +662,8 @@ public class ChoiceManPlugin extends Plugin {
         choiceManOverlay.setPendingCount(Math.max(0, totalQueued));
 
         if (!choiceManOverlay.isActive()) {
-            startChoiceIfNeeded(); // kick off immediately if idle
+            startChoiceIfNeeded();
+
             addGameMessage(black("[") + blue("Choice Man") + black("] ")
                     + "Rolling " + red(String.valueOf(q)) + " pick" + (q == 1 ? "" : "s")
                     + " with " + red(String.valueOf(showCount)) + " choices each.");
@@ -547,6 +680,7 @@ public class ChoiceManPlugin extends Plugin {
     @Subscribe
     public void onScriptPostFired(ScriptPostFired event) {
         if (!featuresActive || !config.geRestrictions()) return;
+
         if (event.getScriptId() == GE_SEARCH_BUILD_SCRIPT) {
             filterGeResults();
         }
@@ -563,12 +697,13 @@ public class ChoiceManPlugin extends Plugin {
             final Widget row = children[i];
             final Widget icon = children[i + 1];
             final Widget item = children[i + 2];
+
             if (item == null) continue;
 
             final int canon = itemManager.canonicalize(item.getItemId());
             final String base = itemsRepo.getBaseForId(canon);
 
-            final boolean ok = (base != null) && unlocks.isBaseUnlocked(base) && unlocks.isBaseObtained(base);
+            final boolean ok = base != null && unlocks.isBaseUnlocked(base) && unlocks.isBaseObtained(base);
             if (!ok) {
                 if (row != null) row.setHidden(true);
                 if (icon != null) icon.setOpacity(70);
@@ -590,6 +725,7 @@ public class ChoiceManPlugin extends Plugin {
      */
     public boolean isNormalWorld() {
         EnumSet<WorldType> worldTypes = client.getWorldType();
+
         return !(worldTypes.contains(WorldType.DEADMAN)
                 || worldTypes.contains(WorldType.SEASONAL)
                 || worldTypes.contains(WorldType.BETA_WORLD)
@@ -615,23 +751,194 @@ public class ChoiceManPlugin extends Plugin {
 
         if (next == -1) {
             if (maxHintSent) return;
+
             maxHintSent = true;
-            addGameMessage(prefix + "You’re at the max — " + red(currentChoices + " options") + " per pick.");
+            addGameMessage(prefix + "You're at the max - " + red(currentChoices + " options") + " per pick.");
             return;
         }
 
         maxHintSent = false;
+
         final int remaining = Math.max(0, next - currentTotal);
-        if (remaining <= 0 || (remaining % 5) != 0) return;
+        if (remaining <= 0 || remaining % 5 != 0) return;
         if (remaining == lastHintRemaining && next == lastHintThreshold) return;
+
         lastHintRemaining = remaining;
         lastHintThreshold = next;
-        final String levelsWord = (remaining == 1) ? "level" : "levels";
+
+        final String levelsWord = remaining == 1 ? "level" : "levels";
 
         addGameMessage(prefix
                 + red(remaining + " " + levelsWord) + " until your picks show "
                 + red((currentChoices + 1) + " options")
                 + " (threshold: " + red(String.valueOf(next)) + " total).");
+    }
+
+    /**
+     * Always creates the local example files if missing.
+     * Existing player-edited files are never overwritten.
+     */
+    private Path ensureCustomItemsTemplateExists() {
+        Path dir = RUNELITE_DIR.toPath().resolve(CUSTOM_ITEMS_DIR);
+        Path customItemsPath = dir.resolve(CUSTOM_ITEMS_FILE);
+        Path readmePath = dir.resolve(CUSTOM_ITEMS_README_FILE);
+
+        try {
+            Files.createDirectories(dir);
+
+            if (!Files.exists(customItemsPath)) {
+                Files.write(customItemsPath, DEFAULT_CUSTOM_ITEMS_TEMPLATE.getBytes(StandardCharsets.UTF_8));
+            }
+
+            if (!Files.exists(readmePath)) {
+                Files.write(readmePath, CUSTOM_ITEMS_README.getBytes(StandardCharsets.UTF_8));
+            }
+        } catch (IOException ex) {
+            log.warn("Failed to create Choice Man custom item template files", ex);
+        }
+
+        return customItemsPath;
+    }
+
+    /**
+     * Loads bundled items first. If custom items are enabled, attempts custom loading.
+     * <p>
+     * preferLocalCustomFile:
+     * - true when the user toggles the config, so their edited local file is imported immediately.
+     * - false on startup, so synced config data wins over the untouched starter template.
+     */
+    private void reloadItemRepository(boolean preferLocalCustomFile) {
+        itemsRepo.loadFromResources(gson);
+
+        if (!config.useCustomItems()) {
+            return;
+        }
+
+        String json = null;
+
+        if (preferLocalCustomFile) {
+            json = readLocalCustomItemsAndSync(true);
+        }
+
+        if (json == null) {
+            json = readSyncedCustomItems(preferLocalCustomFile);
+        }
+
+        if (json == null && !preferLocalCustomFile) {
+            json = readLocalCustomItemsAndSync(false);
+        }
+
+        if (json != null && !itemsRepo.loadFromString(gson, json)) {
+            log.warn("Failed to load custom Choice Man items; using bundled items.");
+        }
+    }
+
+    private void reloadItemRepositoryAndRefresh(boolean preferLocalCustomFile) {
+        reloadItemRepository(preferLocalCustomFile);
+
+        if (!featuresActive) {
+            return;
+        }
+
+        unlocks.init(gson, itemsRepo);
+        unlocks.loadFromDisk();
+
+        clientThread.invokeLater(() -> unlocksWidgetController.refreshIfActive());
+
+        if (choiceManPanel != null) {
+            SwingUtilities.invokeLater(() -> choiceManPanel.refresh(unlocks));
+        }
+    }
+
+    private String readLocalCustomItemsAndSync(boolean showMessages) {
+        Path path = ensureCustomItemsTemplateExists();
+
+        String json;
+        try {
+            json = new String(Files.readAllBytes(path), StandardCharsets.UTF_8);
+        } catch (IOException ex) {
+            log.warn("Failed to read custom Choice Man items from {}", path, ex);
+
+            if (showMessages) {
+                addGameMessage(black("[") + blue("Choice Man") + black("] ")
+                        + "Failed to read custom_items.json. Using bundled items.");
+            }
+
+            return null;
+        }
+
+        if (isDefaultCustomItemsTemplate(json)) {
+            if (showMessages) {
+                addGameMessage(black("[") + blue("Choice Man") + black("] ")
+                        + "custom_items.json is still the example template. Edit it first, then toggle this setting off/on.");
+            }
+
+            return null;
+        }
+
+        ItemsRepository.ValidationResult validation = ItemsRepository.validateCustomItemsJson(gson, json);
+        if (!validation.isValid()) {
+            if (showMessages) {
+                addValidationErrors("custom_items.json is invalid", validation.getErrors());
+            }
+
+            return null;
+        }
+
+        configManager.setConfiguration(CONFIG_GROUP, CUSTOM_ITEMS_DATA_KEY, json);
+        configManager.setConfiguration(CONFIG_GROUP, CUSTOM_ITEMS_TIMESTAMP_KEY, String.valueOf(System.currentTimeMillis()));
+
+        return json;
+    }
+
+    private String readSyncedCustomItems(boolean showMessages) {
+        String json = configManager.getConfiguration(CONFIG_GROUP, CUSTOM_ITEMS_DATA_KEY);
+        if (json == null || json.trim().isEmpty()) {
+            if (showMessages) {
+                addGameMessage(black("[") + blue("Choice Man") + black("] ")
+                        + "No synced custom item list found. Using bundled items.");
+            }
+
+            return null;
+        }
+
+        ItemsRepository.ValidationResult validation = ItemsRepository.validateCustomItemsJson(gson, json);
+        if (!validation.isValid()) {
+            log.warn("Synced custom Choice Man item list is invalid: {}", validation.getErrors());
+
+            if (showMessages) {
+                addValidationErrors("Synced custom item list is invalid", validation.getErrors());
+            }
+
+            return null;
+        }
+
+        return json;
+    }
+
+    private boolean isDefaultCustomItemsTemplate(String json) {
+        if (json == null) {
+            return false;
+        }
+
+        String normalized = json.replace("\r\n", "\n").trim();
+        String template = DEFAULT_CUSTOM_ITEMS_TEMPLATE.replace("\r\n", "\n").trim();
+
+        return normalized.equals(template);
+    }
+
+    private void addValidationErrors(String heading, List<String> errors) {
+        String firstErrors = errors.stream()
+                .limit(3)
+                .collect(Collectors.joining("; "));
+
+        addGameMessage(black("[") + blue("Choice Man") + black("] ")
+                + heading + ": " + red(firstErrors));
+
+        if (errors.size() > 3) {
+            addGameMessage(black("[") + blue("Choice Man") + black("] ")
+                    + red(String.valueOf(errors.size() - 3)) + " more validation error(s). Check custom_items.json.");
+        }
     }
 
     private void addGameMessage(String msg) {

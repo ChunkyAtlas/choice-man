@@ -18,7 +18,15 @@ Choice Man tracks logical item bases instead of treating every item ID as a sepa
 
 For example, multiple item IDs or variants may map to the same base item. Unlocking the base unlocks the tracked variants associated with it.
 
-Tracked item bases are loaded from the plugin’s bundled `items.json` resource.
+Tracked item bases are loaded from the plugin’s bundled `items.json` resource by default.
+
+Choice Man can also use a custom item list from:
+
+```text
+~/.runelite/choiceman/custom_items.json
+```
+
+When a valid custom list is enabled, it is saved to RuneLite config so it can sync across RuneLite profiles and machines.
 
 ### Unlocked Items
 
@@ -108,6 +116,63 @@ The overlay restores after combat ends, allowing you to make the queued choice o
 
 ---
 
+### Custom Item Lists
+
+Choice Man supports custom item lists through a local `custom_items.json` file.
+
+On startup, Choice Man creates an example file if one does not already exist:
+
+```text
+~/.runelite/choiceman/custom_items.json
+```
+
+It also creates a README file with formatting instructions:
+
+```text
+~/.runelite/choiceman/custom_items_README.txt
+```
+
+To use a custom item list:
+
+1. Edit `custom_items.json`.
+2. Open RuneLite’s plugin settings.
+3. Select **Choice Man**.
+4. Enable **Use custom item list**.
+5. If the setting was already enabled, toggle it off and back on after editing the file.
+
+When **Use custom item list** is enabled, Choice Man validates the local file. If the file is valid, the plugin loads it immediately and saves the JSON to RuneLite config so it can sync across profiles and machines.
+
+If the custom file is invalid, missing, or still unchanged from the example template, Choice Man falls back to the bundled item list.
+
+Custom item list format:
+
+```json
+[
+  {
+    "name": "Abyssal whip",
+    "ids": [4151]
+  },
+  {
+    "name": "Dragon scimitar",
+    "ids": [4587]
+  },
+  {
+    "name": "Example item with variants",
+    "ids": [11802, 11804, 11806, 11808]
+  }
+]
+```
+
+Rules:
+
+- The file must be valid JSON.
+- The root value must be an array.
+- Each item needs a non-empty `name`.
+- Each item needs `ids` as a non-empty array of positive OSRS item IDs.
+- Use multiple IDs for variants if you want them treated as the same base item.
+- The preferred field is `ids`, but `id` and `itemid` are also accepted for compatibility.
+
+---
 
 ## Item Restrictions
 
@@ -197,7 +262,7 @@ Choice Man can dim locked tracked items across RuneLite interfaces.
 
 Dimming applies when:
 
-- The item is tracked in `items.json`
+- The item is tracked in the active item list
 - The item’s base is not unlocked
 
 Dimming behavior includes:
@@ -222,41 +287,48 @@ Open RuneLite’s plugin settings and select **Choice Man** to configure:
 - **Choice reveal animation (ms)**
 - **Accent color**
 - **SFX volume**
+- **Use custom item list**
 
 ---
 
 ## Usage
 
 1. **Enable the Plugin**
-    - Enable **Choice Man** in RuneLite.
-    - The plugin loads tracked item bases from its bundled item data.
-    - Saved unlocked and obtained progress is loaded from disk.
+   - Enable **Choice Man** in RuneLite.
+   - The plugin loads tracked item bases from its bundled item data by default.
+   - Saved unlocked and obtained progress is loaded from disk.
 
-2. **Gain a Level**
-    - Each total-level increase queues one unlock choice.
-    - The number of cards shown depends on your current total level.
+2. **Optional: Configure a Custom Item List**
+   - Edit `~/.runelite/choiceman/custom_items.json`.
+   - Enable **Use custom item list** in the Choice Man config.
+   - If valid, the custom list loads immediately and is saved to RuneLite config for profile sync.
+   - If invalid, Choice Man falls back to the bundled item list.
 
-3. **Choose an Unlock**
-    - Pick one card from the Choice Man overlay.
-    - The selected item base is unlocked and saved automatically.
+3. **Gain a Level**
+   - Each total-level increase queues one unlock choice.
+   - The number of cards shown depends on your current total level.
 
-4. **Obtain Items**
-    - When a tracked item appears in your inventory, its base is marked as obtained.
-    - Obtained progress updates the sidebar and unlock views.
+4. **Choose an Unlock**
+   - Pick one card from the Choice Man overlay.
+   - The selected item base is unlocked and saved automatically.
 
-5. **Use Unlocked Items**
-    - Tracked items can be used normally once their base is unlocked.
-    - Locked tracked items remain restricted to safe actions.
+5. **Obtain Items**
+   - When a tracked item appears in your inventory, its base is marked as obtained.
+   - Obtained progress updates the sidebar and unlock views.
 
-6. **Track Progress**
-    - Use the Choice Man sidebar to view unlocked and obtained item bases.
-    - Use the Music tab unlock view for a larger progress display.
+6. **Use Unlocked Items**
+   - Tracked items can be used normally once their base is unlocked.
+   - Locked tracked items remain restricted to safe actions.
+
+7. **Track Progress**
+   - Use the Choice Man sidebar to view unlocked and obtained item bases.
+   - Use the Music tab unlock view for a larger progress display.
 
 ---
 
 ## File Locations
 
-Progress is stored locally under:
+Choice Man stores local files under:
 
 ```text
 ~/.runelite/choiceman/
@@ -279,6 +351,22 @@ Progress is stored locally under:
 The plugin writes both files atomically using a temporary file and then replaces the saved file.
 
 Missing files are tolerated. Entries that are no longer present in the item repository are dropped when data is loaded.
+
+### Custom Item Files
+
+- **Custom Item List**
+
+  ```text
+  custom_items.json
+  ```
+
+- **Custom Item Instructions**
+
+  ```text
+  custom_items_README.txt
+  ```
+
+`custom_items.json` is the editable local file. When **Use custom item list** is enabled and the file is valid, Choice Man saves the custom JSON to RuneLite config so it can sync across profiles and machines.
 
 ---
 

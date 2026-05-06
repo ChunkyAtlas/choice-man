@@ -4,6 +4,7 @@ import net.runelite.client.config.Alpha;
 import net.runelite.client.config.Config;
 import net.runelite.client.config.ConfigGroup;
 import net.runelite.client.config.ConfigItem;
+import net.runelite.client.config.ConfigSection;
 
 import java.awt.Color;
 
@@ -70,8 +71,25 @@ public interface ChoiceManConfig extends Config
     @ConfigItem(
             keyName = "sfxVolume",
             name = "SFX volume",
-            description = "Volume for Choice Man sounds (0–100%).",
+            description = "Volume for Choice Man sounds (0-100%).",
             position = 22
     )
     default int sfxVolume() { return 100; }
+
+    @ConfigSection(
+            name = "Advanced",
+            description = "Advanced settings. Incorrect formatting or item IDs may break progression, restrictions, or unlock behavior.",
+            position = 30,
+            closedByDefault = true
+    )
+    String advancedSection = "advancedSection";
+
+    @ConfigItem(
+            keyName = "useCustomItems",
+            name = "Use custom item list",
+            description = "Loads a custom item list from ~/.runelite/choiceman/custom_items.json.",
+            position = 31,
+            section = advancedSection
+    )
+    default boolean useCustomItems() { return false; }
 }
