@@ -34,11 +34,12 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayDeque;
 import java.util.Collections;
+import java.util.Deque;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.concurrent.ThreadLocalRandom;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 import static net.runelite.client.RuneLite.RUNELITE_DIR;
@@ -117,15 +118,11 @@ public class ChoiceManPlugin extends Plugin {
 
     /**
      * Queue of pending presentations across callbacks.
+     * Each queued choice stores the offer count it earned at that exact total level.
      */
-    private final AtomicInteger pendingChoices = new AtomicInteger(0);
+    private final Deque<PendingChoice> pendingChoiceQueue = new ArrayDeque<>();
 
-    /**
-     * How many of the pending presentations are milestone (200/500/1000) and should use gold BG.
-     */
-    private final AtomicInteger pendingMilestoneChoices = new AtomicInteger(0);
-
-    private final AtomicInteger pendingAutoMinimizeChoices = new AtomicInteger(0);
+    private PendingChoice activeChoice = null;
 
     @Inject
     private Client client;
@@ -192,7 +189,6 @@ public class ChoiceManPlugin extends Plugin {
     private NavigationButton navButton;
     private MouseListener overlayMouse;
 
-    private volatile Integer forcedOfferCount = null;
     private volatile boolean featuresActive = false;
     private volatile int lastKnownTotal = -1;
     private volatile boolean baselineReady = false;
@@ -234,6 +230,10 @@ public class ChoiceManPlugin extends Plugin {
         return -1;
     }
 
+    private static boolean isMilestoneTotal(int total) {
+        return total == 200 || total == 500 || total == 1000;
+    }
+
     @Provides
     ChoiceManConfig provideConfig(ConfigManager configManager) {
         return configManager.getConfig(ChoiceManConfig.class);
@@ -269,9 +269,9 @@ public class ChoiceManPlugin extends Plugin {
         unlocks.init(gson, itemsRepo);
         unlocks.loadFromDisk();
 
-        pendingChoices.set(0);
-        pendingMilestoneChoices.set(0);
-        pendingAutoMinimizeChoices.set(0);
+        clearPendingChoices();
+        choiceManOverlay.setPendingCount(0);
+
         lastKnownTotal = -1;
         baselineReady = false;
         lastHintRemaining = Integer.MIN_VALUE;
@@ -294,9 +294,8 @@ public class ChoiceManPlugin extends Plugin {
             log.debug("Failed to set initial SFX volume", ex);
         }
 
-        choiceManOverlay.setPendingCount(0);
-
-        choiceManOverlay.setOnPick(baseName -> {
+        choiceManOverlay.setOnPick(baseName ->
+        {
             unlocks.unlockBase(baseName, itemsRepo.getIdsForBase(baseName));
             unlocks.saveToDisk();
 
@@ -310,13 +309,10 @@ public class ChoiceManPlugin extends Plugin {
                 SwingUtilities.invokeLater(() -> choiceManPanel.refresh(unlocks));
             }
 
-            // Advance the queue
-            int remaining = pendingChoices.decrementAndGet();
-            choiceManOverlay.setPendingCount(Math.max(0, remaining));
+            completeActiveChoice();
 
-            if (remaining <= 0) {
-                forcedOfferCount = null; // return to normal (level-based) behavior
-            }
+            int remaining = pendingChoiceCount();
+            choiceManOverlay.setPendingCount(Math.max(0, remaining));
 
             if (remaining > 0) {
                 clientThread.invoke(this::startChoiceIfNeeded);
@@ -420,10 +416,9 @@ public class ChoiceManPlugin extends Plugin {
 
         choiceManPanel = null;
 
-        pendingChoices.set(0);
-        pendingMilestoneChoices.set(0);
-        pendingAutoMinimizeChoices.set(0);
+        clearPendingChoices();
         choiceManOverlay.setPendingCount(0);
+
         lastKnownTotal = -1;
         autoMinimizedActive = false;
         baselineReady = false;
@@ -477,27 +472,20 @@ public class ChoiceManPlugin extends Plugin {
         }
 
         if (current > lastKnownTotal) {
-            int delta = current - lastKnownTotal;
+            boolean autoMinimize = combatMinimizer.isInCombatNow();
 
-            // Count milestone crossings (each one deserves a gold presentation)
-            int crossedMilestones = 0;
-            if (lastKnownTotal < 200 && current >= 200) crossedMilestones++;
-            if (lastKnownTotal < 500 && current >= 500) crossedMilestones++;
-            if (lastKnownTotal < 1000 && current >= 1000) crossedMilestones++;
-
-            if (crossedMilestones > 0) {
-                pendingMilestoneChoices.addAndGet(crossedMilestones);
+            for (int level = lastKnownTotal + 1; level <= current; level++) {
+                enqueuePendingChoice(new PendingChoice(
+                        choiceCountForTotal(level),
+                        isMilestoneTotal(level),
+                        autoMinimize
+                ));
             }
 
-            if (combatMinimizer.isInCombatNow()) {
-                pendingAutoMinimizeChoices.addAndGet(delta);
-            }
-
-            int totalQueued = pendingChoices.addAndGet(delta);
             lastKnownTotal = current;
 
             // Update minimized pill with true queue count
-            choiceManOverlay.setPendingCount(Math.max(0, totalQueued));
+            choiceManOverlay.setPendingCount(Math.max(0, pendingChoiceCount()));
 
             // Chat hint about the next threshold
             announceThresholdHint(current);
@@ -543,44 +531,30 @@ public class ChoiceManPlugin extends Plugin {
 
     /**
      * Start a presentation if we have pending choices and the overlay is idle.
-     * Pulls one milestone flag from the queue if available.
      */
     private void startChoiceIfNeeded() {
-        if (pendingChoices.get() <= 0) return;
         if (choiceManOverlay.isActive()) return;
 
         List<String> pool = itemsRepo.getAllBasesStillLocked(unlocks);
         if (pool.isEmpty()) {
-            pendingChoices.set(0);
-            pendingMilestoneChoices.set(0);
-            pendingAutoMinimizeChoices.set(0);
+            clearPendingChoices();
             choiceManOverlay.setPendingCount(0);
             return;
         }
 
-        int offerCount = (forcedOfferCount != null)
-                ? Math.max(1, Math.min(5, forcedOfferCount))
-                : choiceCountForTotal(computeTotalLevel());
+        PendingChoice choice = pollPendingChoice();
+        if (choice == null) return;
 
         Collections.shuffle(pool, ThreadLocalRandom.current());
 
         List<String> offer = pool.stream()
-                .limit(Math.min(offerCount, pool.size()))
+                .limit(Math.min(choice.offerCount, pool.size()))
                 .collect(Collectors.toList());
 
-        boolean milestone = false;
-        int m = pendingMilestoneChoices.get();
+        choiceManOverlay.setPendingCount(Math.max(0, pendingChoiceCount()));
+        choiceManOverlay.presentChoicesSequential(offer, choice.milestone);
 
-        if (m > 0) {
-            // consume one milestone flag for this presentation
-            pendingMilestoneChoices.decrementAndGet();
-            milestone = true;
-        }
-
-        choiceManOverlay.presentChoicesSequential(offer, milestone);
-
-        int hadTag = pendingAutoMinimizeChoices.getAndUpdate(v -> v > 0 ? v - 1 : 0);
-        if (hadTag > 0 && combatMinimizer.isInCombatNow()) {
+        if (choice.autoMinimize && combatMinimizer.isInCombatNow()) {
             choiceManOverlay.setMinimized(true);
             autoMinimizedActive = true;
         }
@@ -648,12 +622,12 @@ public class ChoiceManPlugin extends Plugin {
             return;
         }
 
-        // Force the presentation size for this manual queue
-        forcedOfferCount = showCount;
+        // Add Q manual presentations using the requested presentation size.
+        for (int i = 0; i < q; i++) {
+            enqueuePendingChoice(new PendingChoice(showCount, false, false));
+        }
 
-        // Add Q presentations to the standard queue and reflect in minimized pill
-        int totalQueued = pendingChoices.addAndGet(q);
-        choiceManOverlay.setPendingCount(Math.max(0, totalQueued));
+        choiceManOverlay.setPendingCount(Math.max(0, pendingChoiceCount()));
 
         if (!choiceManOverlay.isActive()) {
             startChoiceIfNeeded();
@@ -766,6 +740,32 @@ public class ChoiceManPlugin extends Plugin {
                 + red(remaining + " " + levelsWord) + " until your picks show "
                 + red((currentChoices + 1) + " options")
                 + " (threshold: " + red(String.valueOf(next)) + " total).");
+    }
+
+    private synchronized void clearPendingChoices() {
+        pendingChoiceQueue.clear();
+        activeChoice = null;
+    }
+
+    private synchronized int pendingChoiceCount() {
+        return pendingChoiceQueue.size() + (activeChoice == null ? 0 : 1);
+    }
+
+    private synchronized void enqueuePendingChoice(PendingChoice choice) {
+        pendingChoiceQueue.addLast(choice);
+    }
+
+    private synchronized PendingChoice pollPendingChoice() {
+        if (activeChoice != null) {
+            return null;
+        }
+
+        activeChoice = pendingChoiceQueue.pollFirst();
+        return activeChoice;
+    }
+
+    private synchronized void completeActiveChoice() {
+        activeChoice = null;
     }
 
     /**
@@ -940,6 +940,18 @@ public class ChoiceManPlugin extends Plugin {
             client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", msg, null);
         } catch (Exception ex) {
             log.debug("Failed to add chat message", ex);
+        }
+    }
+
+    private static final class PendingChoice {
+        private final int offerCount;
+        private final boolean milestone;
+        private final boolean autoMinimize;
+
+        private PendingChoice(int offerCount, boolean milestone, boolean autoMinimize) {
+            this.offerCount = offerCount;
+            this.milestone = milestone;
+            this.autoMinimize = autoMinimize;
         }
     }
 }
