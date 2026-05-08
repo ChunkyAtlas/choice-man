@@ -1,9 +1,8 @@
 package com.choiceman.ui;
 
-import javax.sound.sampled.*;
+import net.runelite.client.audio.AudioPlayer;
+
 import java.awt.*;
-import java.io.ByteArrayInputStream;
-import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -14,7 +13,7 @@ import java.util.concurrent.ThreadLocalRandom;
  * Drives the pick animation sequence for Choice Man:
  * <ul>
  *   <li>Particle burst/explosion effect for non-selected cards</li>
- *   <li>Lightweight audio playback for hover/popup/select SFX with a tiny clip pool</li>
+ *   <li>Lightweight audio playback for hover/popup/select SFX through RuneLite's audio player</li>
  * </ul>
  * <p>
  * Stateless from the caller’s perspective; per-presentation state (particles and SFX volume)
@@ -22,8 +21,13 @@ import java.util.concurrent.ThreadLocalRandom;
  */
 final class PickAnimationEngine {
     private final Map<Integer, List<Particle>> particles = new ConcurrentHashMap<>();
+    private final AudioPlayer audioPlayer;
     private volatile boolean particlesSeeded = false;
     private Sfx sfxHover, sfxPopup, sfxSelect;
+
+    PickAnimationEngine(AudioPlayer audioPlayer) {
+        this.audioPlayer = audioPlayer;
+    }
 
     /**
      * Easing function (cubic-out) used by animations: starts fast, ends slow.
@@ -59,23 +63,19 @@ final class PickAnimationEngine {
     }
 
     /**
-     * Load three short WAV effects and prepare small clip pools for overlapping playback.
-     *
-     * @param hoverRes  classpath resource path for hover SFX
-     * @param popupRes  classpath resource path for popup SFX
-     * @param selectRes classpath resource path for select SFX
+     * Registers three short WAV effects for playback through RuneLite's audio player.
      */
-    void loadSfx(String hoverRes, String popupRes, String selectRes) {
+    void loadSfx() {
         try {
-            sfxHover = Sfx.load(hoverRes, 4);
+            sfxHover = Sfx.load(audioPlayer, "/com/choiceman/sounds/CardMouseover.wav");
         } catch (Exception ignored) {
         }
         try {
-            sfxPopup = Sfx.load(popupRes, 6);
+            sfxPopup = Sfx.load(audioPlayer, "/com/choiceman/sounds/CardPopup.wav");
         } catch (Exception ignored) {
         }
         try {
-            sfxSelect = Sfx.load(selectRes, 3);
+            sfxSelect = Sfx.load(audioPlayer, "/com/choiceman/sounds/CardSelection.wav");
         } catch (Exception ignored) {
         }
     }
@@ -224,117 +224,63 @@ final class PickAnimationEngine {
     }
 
     /**
-     * Tiny sound-effect helper with a small pool of {@link Clip}s to allow overlapping playbacks.
-     * Accepts PCM or converts other encodings to PCM_SIGNED.
+     * Sound-effect helper that delegates playback to RuneLite's {@link AudioPlayer}.
      */
     private static final class Sfx {
-        private final List<Clip> pool = new ArrayList<>();
-        private final byte[] wavBytes;
-        private final int maxPool;
+        private final AudioPlayer audioPlayer;
+        private final String resourcePath;
         private volatile float volumeLinear = 1f;
 
-        private Sfx(byte[] wavBytes, int maxPool) {
-            this.wavBytes = wavBytes;
-            this.maxPool = Math.max(1, maxPool);
+        private Sfx(AudioPlayer audioPlayer, String resourcePath) {
+            this.audioPlayer = audioPlayer;
+            this.resourcePath = resourcePath;
         }
 
         /**
-         * Loads a WAV resource from the classpath, primes a single {@link Clip}, and prepares a pool.
+         * Verifies a WAV resource exists and creates a playback wrapper for it.
          *
          * @param resourcePath classpath resource path to a small WAV file
-         * @param maxPool      max number of clips to allocate lazily for overlap
          * @return Sfx instance
-         * @throws Exception if the resource cannot be found or opened
+         * @throws Exception if the resource cannot be found
          */
-        static Sfx load(String resourcePath, int maxPool) throws Exception {
-            try (InputStream in = ChoiceManOverlay.class.getResourceAsStream(resourcePath)) {
-                if (in == null) throw new Exception("Missing SFX: " + resourcePath);
-                byte[] bytes = in.readAllBytes();
-                Sfx sfx = new Sfx(bytes, maxPool);
-                Clip first = sfx.makeClip();
-                sfx.applyVolume(first);
-                synchronized (sfx.pool) {
-                    sfx.pool.add(first);
-                }
-                return sfx;
+        static Sfx load(AudioPlayer audioPlayer, String resourcePath) throws Exception {
+            if (ChoiceManOverlay.class.getResource(resourcePath) == null) {
+                throw new Exception("Missing SFX: " + resourcePath);
             }
+
+            return new Sfx(audioPlayer, resourcePath);
         }
 
         /**
-         * Creates a {@link Clip} from the stored WAV bytes, converting to PCM if needed.
-         */
-        private Clip makeClip() throws Exception {
-            try (AudioInputStream ais0 = AudioSystem.getAudioInputStream(new ByteArrayInputStream(wavBytes))) {
-                AudioFormat base = ais0.getFormat();
-                AudioInputStream use = ais0;
-                if (base.getEncoding() != AudioFormat.Encoding.PCM_SIGNED) {
-                    AudioFormat pcm = new AudioFormat(AudioFormat.Encoding.PCM_SIGNED, base.getSampleRate(),
-                            16, base.getChannels(), base.getChannels() * 2, base.getSampleRate(), false);
-                    use = AudioSystem.getAudioInputStream(pcm, ais0);
-                }
-                Clip c = AudioSystem.getClip();
-                c.open(use);
-                return c;
-            }
-        }
-
-        /**
-         * Sets the linear volume (0..1) applied to all pooled clips.
+         * Sets the linear volume (0..1) used for this sound effect.
          *
-         * @param v linear gain (0 mutes). If MASTER_GAIN is available, converts to dB.
+         * @param v linear gain (0 mutes).
          */
         void setVolume(float v) {
             volumeLinear = v;
-            synchronized (pool) {
-                for (Clip c : pool) applyVolume(c);
-            }
         }
 
         /**
-         * Applies the current volume to a clip using MASTER_GAIN if present, otherwise VOLUME.
+         * Converts the current linear volume to a decibel gain value for RuneLite audio playback.
          */
-        private void applyVolume(Clip c) {
-            try {
-                FloatControl gain = (FloatControl) c.getControl(FloatControl.Type.MASTER_GAIN);
-                float db = (volumeLinear <= 0f) ? gain.getMinimum() : (float) (20.0 * Math.log10(volumeLinear));
-                db = Math.max(gain.getMinimum(), Math.min(gain.getMaximum(), db));
-                gain.setValue(db);
-                return;
-            } catch (IllegalArgumentException ignored) {
+        private float gainDb() {
+            if (volumeLinear <= 0f) {
+                return -80.0f;
             }
-            try {
-                FloatControl vol = (FloatControl) c.getControl(FloatControl.Type.VOLUME);
-                float vv = Math.max(vol.getMinimum(), Math.min(vol.getMaximum(), volumeLinear));
-                vol.setValue(vv);
-            } catch (IllegalArgumentException ignored) {
-            }
+
+            return (float) (20.0 * Math.log10(volumeLinear));
         }
 
         /**
-         * Plays one instance of the effect. Reuses an idle clip if available,
-         * otherwise lazily allocates a new one up to {@code maxPool}.
+         * Plays one instance of the effect through RuneLite's audio player.
          */
         void play() {
             try {
-                Clip chosen = null;
-                synchronized (pool) {
-                    for (Clip c : pool)
-                        if (!c.isRunning()) {
-                            chosen = c;
-                            break;
-                        }
-                    if (chosen == null && pool.size() < maxPool) {
-                        chosen = makeClip();
-                        applyVolume(chosen);
-                        pool.add(chosen);
-                    }
+                if (volumeLinear <= 0f) {
+                    return;
                 }
-                if (chosen != null) {
-                    chosen.stop();
-                    chosen.flush();
-                    chosen.setFramePosition(0);
-                    chosen.start();
-                }
+
+                audioPlayer.play(ChoiceManOverlay.class, resourcePath, gainDb());
             } catch (Exception ignored) {
             }
         }

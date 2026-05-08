@@ -6,6 +6,7 @@ import com.choiceman.data.ItemsRepository;
 import lombok.Getter;
 import lombok.Setter;
 import net.runelite.api.Client;
+import net.runelite.client.audio.AudioPlayer;
 import net.runelite.client.eventbus.EventBus;
 import net.runelite.client.game.ItemManager;
 import net.runelite.client.input.MouseAdapter;
@@ -213,13 +214,13 @@ public class ChoiceManOverlay extends Overlay {
      * @param client RuneLite client (used for viewport size).
      */
     @Inject
-    public ChoiceManOverlay(Client client, EventBus eventBus) {
+    public ChoiceManOverlay(Client client, EventBus eventBus, AudioPlayer audioPlayer) {
         this.client = client;
         this.eventBus = eventBus;
         setPosition(OverlayPosition.TOP_CENTER);
         setLayer(OverlayLayer.ABOVE_WIDGETS);
         this.renderer = new CardRenderer(this::getAccent);
-        this.anim = new PickAnimationEngine();
+        this.anim = new PickAnimationEngine(audioPlayer);
     }
 
     /**
@@ -285,9 +286,6 @@ public class ChoiceManOverlay extends Overlay {
         this.unlocks = unlocks;
 
         anim.loadSfx(
-                "/com/choiceman/sounds/CardMouseover.wav",
-                "/com/choiceman/sounds/CardPopup.wav",
-                "/com/choiceman/sounds/CardSelection.wav"
         );
         if (config != null) setSfxVolumePercent(config.sfxVolume());
     }

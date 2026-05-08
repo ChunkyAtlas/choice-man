@@ -1,5 +1,6 @@
 package com.choiceman.ui;
 
+import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Client;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.game.SpriteManager;
@@ -15,6 +16,7 @@ import javax.inject.Singleton;
  * All client state mutations (sprite registration and cache reset) are scheduled
  * on the client thread to avoid race conditions with the game loop.
  */
+@Slf4j
 @Singleton
 public final class SpriteOverrideManager implements SpriteOverride {
     private static final int SPRITE_ID = 910;
@@ -46,7 +48,7 @@ public final class SpriteOverrideManager implements SpriteOverride {
                         client.getSpriteOverrides().put(SPRITE_ID, pixels);
                     }
                 } else {
-                    System.out.println("[ChoiceMan] unlocks.png not found at " + RESOURCE);
+                    log.debug("[ChoiceMan] unlocks.png not found at {}", RESOURCE);
                 }
             } catch (Exception ignored) { /* noop */ }
 
