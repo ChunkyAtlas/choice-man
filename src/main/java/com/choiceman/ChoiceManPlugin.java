@@ -50,7 +50,7 @@ import static net.runelite.client.RuneLite.RUNELITE_DIR;
  */
 @PluginDescriptor(
         name = "Choice Man",
-        description = "Every total-level increase presents items to unlock; dims/blocks locked items & spells; GE/shop restrictions.",
+        description = "Every level increase grants a choice of one unlock from a set of items. Credit to QueueScape",
         tags = {"unlock", "ironman", "rules", "ge", "shops", "overlay", "runelite"}
 )
 @Slf4j
