@@ -13043,12 +13043,6 @@
     ]
   },
   {
-    "name": "Master scroll book",
-    "ids": [
-      21387
-    ]
-  },
-  {
     "name": "Master scroll book (empty)",
     "ids": [
       21387
@@ -13199,12 +13193,6 @@
     ]
   },
   {
-    "name": "Mimic scroll case",
-    "ids": [
-      30926
-    ]
-  },
-  {
     "name": "Minced meat",
     "ids": [
       7070
@@ -13268,42 +13256,6 @@
     "name": "Mining helmet",
     "ids": [
       5014
-    ]
-  },
-  {
-    "name": "Minor beginner scroll case",
-    "ids": [
-      30902
-    ]
-  },
-  {
-    "name": "Minor easy scroll case",
-    "ids": [
-      30906
-    ]
-  },
-  {
-    "name": "Minor elite scroll case",
-    "ids": [
-      30918
-    ]
-  },
-  {
-    "name": "Minor hard scroll case",
-    "ids": [
-      30914
-    ]
-  },
-  {
-    "name": "Minor master scroll case",
-    "ids": [
-      30922
-    ]
-  },
-  {
-    "name": "Minor medium scroll case",
-    "ids": [
-      30910
     ]
   },
   {
