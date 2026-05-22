@@ -8662,12 +8662,6 @@
     ]
   },
   {
-    "name": "Fish chunks",
-    "ids": [
-      22818
-    ]
-  },
-  {
     "name": "Fish food",
     "ids": [
       272
@@ -13043,6 +13037,12 @@
     ]
   },
   {
+    "name": "Master scroll book",
+    "ids": [
+      21387
+    ]
+  },
+  {
     "name": "Master scroll book (empty)",
     "ids": [
       21387
@@ -13193,6 +13193,12 @@
     ]
   },
   {
+    "name": "Mimic scroll case",
+    "ids": [
+      30926
+    ]
+  },
+  {
     "name": "Minced meat",
     "ids": [
       7070
@@ -13256,6 +13262,42 @@
     "name": "Mining helmet",
     "ids": [
       5014
+    ]
+  },
+  {
+    "name": "Minor beginner scroll case",
+    "ids": [
+      30902
+    ]
+  },
+  {
+    "name": "Minor easy scroll case",
+    "ids": [
+      30906
+    ]
+  },
+  {
+    "name": "Minor elite scroll case",
+    "ids": [
+      30918
+    ]
+  },
+  {
+    "name": "Minor hard scroll case",
+    "ids": [
+      30914
+    ]
+  },
+  {
+    "name": "Minor master scroll case",
+    "ids": [
+      30922
+    ]
+  },
+  {
+    "name": "Minor medium scroll case",
+    "ids": [
+      30910
     ]
   },
   {
@@ -23444,7 +23486,7 @@
   {
     "name": "Mithril Cannonball",
     "ids": [
-       31910
+      31910
     ]
   },
   {
@@ -24693,6 +24735,48 @@
     "name": "Cow Slippers",
     "ids": [
       33093,33096,33097,33098
+    ]
+  },
+  {
+    "name": "Immaculate Moleskin",
+    "ids": [
+      33382
+    ]
+  },
+  {
+    "name": "Ballistic attractor schematic",
+    "ids": [
+      33143
+    ]
+  },
+  {
+    "name": "Bosun's Workbench Schematic",
+    "ids": [
+      33423
+    ]
+  },
+  {
+    "name": "Chain",
+    "ids": [
+      32886
+    ]
+  },
+  {
+    "name": "Rubium Geode",
+    "ids": [
+      31724
+    ]
+  },
+  {
+    "name": "Rubium Splinters",
+    "ids": [
+      31722
+    ]
+  },
+  {
+    "name": "Unsired",
+    "ids": [
+      13273, 25624
     ]
   },
   {
