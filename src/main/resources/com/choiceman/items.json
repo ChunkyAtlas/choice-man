@@ -5940,12 +5940,6 @@
     ]
   },
   {
-    "name": "Cooked chompy (roasted)",
-    "ids": [
-      7228
-    ]
-  },
-  {
     "name": "Cooked crab meat",
     "ids": [
       7521
@@ -14345,12 +14339,6 @@
     ]
   },
   {
-    "name": "Nid",
-    "ids": [
-      29836
-    ]
-  },
-  {
     "name": "Nightmare staff",
     "ids": [
       24422
@@ -14654,12 +14642,6 @@
     "name": "Old demon mask",
     "ids": [
       20029
-    ]
-  },
-  {
-    "name": "Old school bond",
-    "ids": [
-      13190
     ]
   },
   {
@@ -18200,12 +18182,6 @@
     "name": "Scurrius' spine",
     "ids": [
       28798
-    ]
-  },
-  {
-    "name": "Scurry",
-    "ids": [
-      28801
     ]
   },
   {
@@ -23700,7 +23676,7 @@
     ]
   },
   {
-    "name": "Rosewood Pyre Plank",
+    "name": "Rosewood Pyre Log",
     "ids": [
       31389
     ]
