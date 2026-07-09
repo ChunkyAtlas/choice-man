@@ -465,10 +465,25 @@ public class ChoiceManPlugin extends Plugin {
         final int current = computeTotalLevel();
 
         if (!baselineReady) {
-            lastKnownTotal = current;
+            int persisted = unlocks.getLevelBaseline();
+
+            if (persisted == ChoiceManUnlocks.NO_BASELINE) {
+                // First run for this profile: adopt the current total as the baseline without
+                // awarding, so an existing account isn't flooded with rolls for past levels.
+                lastKnownTotal = current;
+                unlocks.setLevelBaseline(current);
+                baselineReady = true;
+                announceThresholdHint(current); // initial hint after login
+                return;
+            }
+
+            // Resume from the persisted baseline so any levels gained while logged out (client
+            // closed, or on another device such as mobile) are awarded by the diff logic below.
+            // A plain reconnect leaves current == persisted, so nothing is double-awarded.
+            lastKnownTotal = persisted;
             baselineReady = true;
             announceThresholdHint(current); // initial hint after login
-            return;
+            // fall through to award any positive diff
         }
 
         if (current > lastKnownTotal) {
@@ -483,6 +498,7 @@ public class ChoiceManPlugin extends Plugin {
             }
 
             lastKnownTotal = current;
+            unlocks.setLevelBaseline(current);
 
             // Update minimized pill with true queue count
             choiceManOverlay.setPendingCount(Math.max(0, pendingChoiceCount()));
@@ -491,6 +507,11 @@ public class ChoiceManPlugin extends Plugin {
             announceThresholdHint(current);
 
             startChoiceIfNeeded();
+        } else if (current < lastKnownTotal) {
+            // Real total fell below the baseline (rare, e.g. corrected/stale data). Re-anchor so
+            // future gains aren't silently swallowed.
+            lastKnownTotal = current;
+            unlocks.setLevelBaseline(current);
         }
     }
 

@@ -28,18 +28,33 @@ public class ChoiceManUnlocks {
     private static final String DIR = "choiceman";
     private static final String UNLOCKED_FILE = "unlocked_items.json";
     private static final String OBTAINED_FILE = "obtained_items.json";
+    private static final String BASELINE_FILE = "level_baseline.json";
 
     private static final String CONFIG_GROUP = "choiceman";
     private static final String SYNC_UNLOCKED_KEY = "unlockedItems.data";
     private static final String SYNC_UNLOCKED_TIMESTAMP_KEY = "unlockedItems.timestamp";
     private static final String SYNC_OBTAINED_KEY = "obtainedItems.data";
     private static final String SYNC_OBTAINED_TIMESTAMP_KEY = "obtainedItems.timestamp";
+    private static final String SYNC_BASELINE_KEY = "levelBaseline.data";
+    private static final String SYNC_BASELINE_TIMESTAMP_KEY = "levelBaseline.timestamp";
+
+    /**
+     * "No baseline recorded yet." Distinct from a real total level, which is always >= 0.
+     */
+    public static final int NO_BASELINE = -1;
 
     private static final Type STRING_SET = new TypeToken<Set<String>>() {
     }.getType();
 
     private final Set<String> unlockedBases = Collections.synchronizedSet(new LinkedHashSet<>());
     private final Set<String> obtainedBases = Collections.synchronizedSet(new LinkedHashSet<>());
+
+    /**
+     * Last total level this profile was seen at, persisted so that level-ups earned while the
+     * client was closed (or on another device, e.g. mobile) are awarded on next login.
+     * {@link #NO_BASELINE} until first seeded.
+     */
+    private volatile int levelBaseline = NO_BASELINE;
 
     @Inject
     private ConfigManager configManager;
@@ -177,7 +192,101 @@ public class ChoiceManUnlocks {
             } else if (localTimestamp > 0 && syncedTimestamp < localTimestamp) {
                 saveToConfig(selectedUnlocked, selectedObtained, localTimestamp);
             }
+
+            loadBaseline(dir.resolve(BASELINE_FILE));
         } catch (Exception ignored) {
+        }
+    }
+
+    /**
+     * Load the persisted level baseline, preferring the newer of local file and synced config,
+     * and reconcile by writing the winner back to the stale source. Missing sources leave the
+     * in-memory baseline at {@link #NO_BASELINE}.
+     */
+    private void loadBaseline(Path baselinePath) {
+        Integer local = readIntFromDisk(baselinePath);
+        long localTimestamp = lastModified(baselinePath);
+
+        Integer synced = readIntFromConfig(SYNC_BASELINE_KEY);
+        long syncedTimestamp = readTimestamp(SYNC_BASELINE_TIMESTAMP_KEY);
+
+        boolean useSynced = syncedTimestamp > localTimestamp && synced != null;
+
+        Integer selected = useSynced ? synced : local;
+        if (selected == null) {
+            selected = useSynced ? local : synced;
+        }
+
+        levelBaseline = selected == null ? NO_BASELINE : selected;
+
+        try {
+            if (useSynced && synced != null) {
+                writeJson(baselinePath, synced);
+            } else if (local != null && localTimestamp > 0 && syncedTimestamp < localTimestamp) {
+                saveBaselineToConfig(local, localTimestamp);
+            }
+        } catch (IOException ignored) {
+        }
+    }
+
+    /**
+     * @return the persisted total-level baseline, or {@link #NO_BASELINE} if none has been recorded.
+     */
+    public int getLevelBaseline() {
+        return levelBaseline;
+    }
+
+    /**
+     * Record the total-level baseline and persist it to both the local file and synced config.
+     */
+    public synchronized void setLevelBaseline(int total) {
+        levelBaseline = total;
+
+        try {
+            Path dir = RUNELITE_DIR.toPath().resolve(DIR);
+            Files.createDirectories(dir);
+            writeJson(dir.resolve(BASELINE_FILE), total);
+            saveBaselineToConfig(total, System.currentTimeMillis());
+        } catch (IOException ignored) {
+            // Ignore persistence errors
+        }
+    }
+
+    private void saveBaselineToConfig(int total, long timestamp) {
+        if (configManager == null) {
+            return;
+        }
+
+        configManager.setConfiguration(CONFIG_GROUP, SYNC_BASELINE_KEY, gson.toJson(total));
+        configManager.setConfiguration(CONFIG_GROUP, SYNC_BASELINE_TIMESTAMP_KEY, String.valueOf(timestamp));
+    }
+
+    private Integer readIntFromDisk(Path path) {
+        if (!Files.exists(path)) {
+            return null;
+        }
+
+        try (Reader r = Files.newBufferedReader(path)) {
+            return gson.fromJson(r, Integer.class);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private Integer readIntFromConfig(String key) {
+        if (configManager == null) {
+            return null;
+        }
+
+        String json = configManager.getConfiguration(CONFIG_GROUP, key);
+        if (json == null || json.trim().isEmpty()) {
+            return null;
+        }
+
+        try {
+            return gson.fromJson(json, Integer.class);
+        } catch (Exception ignored) {
+            return null;
         }
     }
 
