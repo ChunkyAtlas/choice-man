@@ -256,8 +256,9 @@ public class ActionHandler {
      * Core gating for non-ground rows.
      * - Always allow safe operations (examine/drop/destroy/release).
      * - Defer skill/spell rows to {@link Restrictions}.
-     * - If the row references a tracked item whose base is locked, only allow the safe operations.
-     * - While bank/deposit UI is open, only allow benign banking operations.
+     * - If the row references a tracked item whose base is unlocked, allow all operations.
+     * - If the row references a tracked item whose base is locked, only allow the safe operations,
+     *   plus benign banking operations while the bank/deposit UI is open.
      */
     private boolean isEnabled(int id, MenuEntry entry) {
         final String option = Text.removeTags(entry.getOption());
@@ -280,6 +281,10 @@ public class ActionHandler {
         final String base = itemsRepo.getBaseForId(id);
         final boolean baseUsable = base != null && unlocks.isBaseUsable(base);
 
+        // Unlocked items behave normally, even while banking
+        if (baseUsable) return true;
+
+        // Locked items: while banking, still allow benign banking ops
         if (enabledUiOpen()) {
             return option.startsWith("Deposit")
                     || option.startsWith("Withdraw")
@@ -288,10 +293,7 @@ public class ActionHandler {
                     || option.startsWith("Destroy");
         }
 
-        if (!baseUsable) {
-            return equalsAny(option, "examine", "drop", "destroy", "release");
-        }
-
-        return true;
+        // Locked, not banking: only harmless ops
+        return equalsAny(option, "examine", "drop", "destroy", "release");
     }
 }
