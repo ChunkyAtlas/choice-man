@@ -76,6 +76,14 @@ public interface ChoiceManConfig extends Config
     )
     default int sfxVolume() { return 100; }
 
+    @ConfigItem(
+            keyName = "wikiLookup",
+            name = "Right-click choices for wiki",
+            description = "Right-click an unlock choice card to open that item on the OSRS Wiki.",
+            position = 23
+    )
+    default boolean wikiLookup() { return true; }
+
     @ConfigSection(
             name = "Advanced",
             description = "Advanced settings. Incorrect formatting or item IDs may break progression, restrictions, or unlock behavior.",
