@@ -5443,7 +5443,7 @@
   {
     "name": "Chocolate cake",
     "ids": [
-      1897, 1899
+      1897, 1899, 1901
     ]
   },
   {
@@ -17734,25 +17734,7 @@
   {
     "name": "Sacred oil",
     "ids": [
-      3436
-    ]
-  },
-  {
-    "name": "Sacred oil",
-    "ids": [
-      3434
-    ]
-  },
-  {
-    "name": "Sacred oil",
-    "ids": [
-      3432
-    ]
-  },
-  {
-    "name": "Sacred oil",
-    "ids": [
-      3430
+      3436, 3430, 3434, 3432
     ]
   },
   {
@@ -23676,7 +23658,7 @@
     ]
   },
   {
-    "name": "Rosewood Pyre Log",
+    "name": "Rosewood Pyre Logs",
     "ids": [
       31389
     ]
@@ -24747,6 +24729,30 @@
     "name": "Unsired",
     "ids": [
       13273, 25624
+    ]
+  },
+  {
+    "name": "Wyrmscraig goat fur",
+    "ids": [
+      34017
+    ]
+  },
+  {
+    "name": "Ardeaglais teleport",
+    "ids": [
+      34033
+    ]
+  },
+  {
+    "name": "Hallowfell",
+    "ids": [
+      34027
+    ]
+  },
+  {
+    "name": "Aggy",
+    "ids": [
+      34042
     ]
   },
   {
