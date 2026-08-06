@@ -34,6 +34,21 @@ tasks.withType(JavaCompile).configureEach {
 	options.release.set(11)
 }
 
+tasks.register('run', JavaExec) {
+	classpath = sourceSets.test.runtimeClasspath
+	mainClass = 'com.choiceman.ChoiceManPluginTest'
+
+	jvmArgs "-ea"
+	// RuneLite targets Java 11. On a newer JDK its macOS full-screen adapter
+	// touches the internal com.apple.eawt API, which later JDKs no longer export
+	// to unnamed modules, so the client crashes on startup with IllegalAccessError.
+	// The official launcher opens these up; the bare run task must do the same.
+	if (org.gradle.internal.os.OperatingSystem.current().isMacOsX()) {
+		jvmArgs "--add-exports", "java.desktop/com.apple.eawt=ALL-UNNAMED"
+	}
+	args "--developer-mode", "--debug"
+}
+
 tasks.register('shadowJar', Jar) {
 	dependsOn configurations.testRuntimeClasspath
 	manifest {
