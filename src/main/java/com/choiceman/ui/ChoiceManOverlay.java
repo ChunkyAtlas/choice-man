@@ -15,6 +15,8 @@ import net.runelite.client.ui.overlay.Overlay;
 import net.runelite.client.ui.overlay.OverlayLayer;
 import net.runelite.client.ui.overlay.OverlayPosition;
 import net.runelite.client.util.ImageUtil;
+import net.runelite.client.util.LinkBrowser;
+import okhttp3.HttpUrl;
 
 import javax.inject.Inject;
 import javax.inject.Singleton;
@@ -85,6 +87,11 @@ public class ChoiceManOverlay extends Overlay {
      * Title placement fine-tuning.
      */
     private static final int TITLE_TOP_Y = 0, CARDS_PULL_UP_Y = 9;
+
+    /**
+     * OSRS Wiki lookup endpoint, matching the query shape used by RuneLite's own Wiki plugin.
+     */
+    private static final HttpUrl WIKI_BASE = HttpUrl.get("https://oldschool.runescape.wiki");
 
     private final Client client;
     private final EventBus eventBus;
@@ -174,6 +181,21 @@ public class ChoiceManOverlay extends Overlay {
         @Override
         public MouseEvent mousePressed(MouseEvent e) {
             if (!active || choices == null || choices.isEmpty() || animating) return e;
+
+            // Right-click a fully revealed card to open its item on the wiki. Does not touch
+            // selection (left-click), and never fires while minimized.
+            if (e.getButton() == MouseEvent.BUTTON3) {
+                if (minimized) return e;
+                Point rp = toOverlayLocal(e);
+                if (rp == null) return e;
+                int idx = indexAt(rp);
+                if (isCardFullyRevealed(idx) && idx >= 0 && idx < choices.size()
+                        && openWiki(choices.get(idx))) {
+                    e.consume();
+                }
+                return e;
+            }
+
             if (e.getButton() != MouseEvent.BUTTON1) return e;
             Point lp = toOverlayLocal(e);
             if (lp == null) return e;
@@ -515,6 +537,11 @@ public class ChoiceManOverlay extends Overlay {
                 g, pillX, pillY, MIN_BTN_W, MIN_BTN_H,
                 "Minimize", !animating && hoverMinimize, this::getAccent);
 
+        // Discoverability hint for the right-click wiki lookup, tucked under the Minimize pill.
+        if (!animating && (config == null || config.wikiLookup())) {
+            renderer.drawHint(g, pillX, pillY + MIN_BTN_H + 4, "Right-click a card for wiki");
+        }
+
         return new Dimension(totalW, totalH);
     }
 
@@ -544,6 +571,36 @@ public class ChoiceManOverlay extends Overlay {
             if (r != null && r.contains(p)) return i;
         }
         return -1;
+    }
+
+    /**
+     * Opens the OSRS Wiki page for the item backing a choice card.
+     * <p>
+     * Uses the base's first concrete item ID with the same {@code Special:Lookup} query the
+     * RuneLite Wiki plugin uses, so the wiki resolves variants to the right article. Opening a
+     * URL performs no game action and is safe from the input thread; {@link LinkBrowser} handles
+     * the browser hand-off.
+     *
+     * @param base the base name shown on the card
+     * @return true if a lookup was launched (so the caller can consume the click)
+     */
+    private boolean openWiki(String base) {
+        if (config != null && !config.wikiLookup()) return false;
+        if (repo == null || base == null) return false;
+
+        int id = repo.getIdsForBase(base).stream().filter(Objects::nonNull).findFirst().orElse(-1);
+        if (id <= 0) return false;
+
+        String url = WIKI_BASE.newBuilder()
+                .addPathSegments("w/Special:Lookup")
+                .addQueryParameter("type", "item")
+                .addQueryParameter("id", Integer.toString(id))
+                .addQueryParameter("name", base)
+                .addQueryParameter("utm_source", "runelite")
+                .build()
+                .toString();
+        LinkBrowser.browse(url);
+        return true;
     }
 
     /**

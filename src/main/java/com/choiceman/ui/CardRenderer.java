@@ -403,6 +403,27 @@ final class CardRenderer {
     }
 
     /**
+     * Draws a small, unobtrusive hint line at the given top-left position. Rendered with a soft
+     * shadow so it stays legible over the game world.
+     *
+     * @param g    graphics context
+     * @param x    left edge of the text
+     * @param topY top y-coordinate of the text block
+     * @param text hint text to draw
+     */
+    void drawHint(Graphics2D g, int x, int topY, String text) {
+        Font old = g.getFont();
+        g.setFont(old.deriveFont(Font.PLAIN, 11f));
+        FontMetrics fm = g.getFontMetrics();
+        int baseline = topY + fm.getAscent();
+        g.setColor(new Color(0, 0, 0, 160));
+        g.drawString(text, x + 1, baseline + 1);
+        g.setColor(new Color(255, 255, 255, 145));
+        g.drawString(text, x, baseline);
+        g.setFont(old);
+    }
+
+    /**
      * Draws the centered restore pill used when the presentation is minimized, and returns
      * the painted extent to help layout upstream overlays.
      *
