@@ -11,6 +11,7 @@ import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.*;
 import net.runelite.api.events.*;
+import net.runelite.api.gameval.InterfaceID;
 import net.runelite.api.gameval.InventoryID;
 import net.runelite.api.widgets.Widget;
 import net.runelite.client.callback.ClientThread;
@@ -56,8 +57,6 @@ import static net.runelite.client.RuneLite.RUNELITE_DIR;
 @Slf4j
 public class ChoiceManPlugin extends Plugin {
     private static final int GE_SEARCH_BUILD_SCRIPT = 751;
-    private static final int GE_GROUP_ID = 162;
-    private static final int GE_RESULTS_CHILD = 51;
     private static final String COL_RESET = "</col>";
 
     private static final String CONFIG_GROUP = "choiceman";
@@ -655,7 +654,7 @@ public class ChoiceManPlugin extends Plugin {
     }
 
     private void filterGeResults() {
-        final Widget results = client.getWidget(GE_GROUP_ID, GE_RESULTS_CHILD);
+        final Widget results = client.getWidget(InterfaceID.Chatbox.MES_LAYER_SCROLLCONTENTS);
         if (results == null) return;
 
         final Widget[] children = results.getDynamicChildren();

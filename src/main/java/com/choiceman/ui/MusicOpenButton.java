@@ -3,6 +3,7 @@ package com.choiceman.ui;
 import lombok.Getter;
 import net.runelite.api.Client;
 import net.runelite.api.events.WidgetLoaded;
+import net.runelite.api.gameval.InterfaceID;
 import net.runelite.api.widgets.JavaScriptCallback;
 import net.runelite.api.widgets.Widget;
 import net.runelite.api.widgets.WidgetPositionMode;
@@ -15,19 +16,10 @@ import javax.inject.Singleton;
 
 /**
  * Adds a small button to the Music tab that opens the Choice Man unlocks view.
- * Placement rules:
- * - If a "Toggle all" widget exists, anchor to its left; otherwise align to the music frame’s right edge.
- * Lifecycle:
- * - Created once per Music group load and reused across reloads.
- * - Hidden while the unlocks override is active.
- * Threading:
- * - All widget mutations must occur on the client thread. Callers already invoke via {@link ClientThread#invokeLater(Runnable)}.
  */
 @Singleton
 public class MusicOpenButton {
-    private static final int MUSIC_GROUP = 239;
-    private static final int CONTENTS = 1;
-    private static final int FRAME = 2;
+    private static final int MUSIC_GROUP = InterfaceID.Music.UNIVERSE >>> 16;
 
     private static final int SPRITE_OPEN = 1976;
     private static final int W = 14, H = 14;
@@ -109,8 +101,8 @@ public class MusicOpenButton {
             return;
         }
 
-        Widget contents = client.getWidget(MUSIC_GROUP, CONTENTS);
-        Widget frame = client.getWidget(MUSIC_GROUP, FRAME);
+        Widget contents = client.getWidget(InterfaceID.Music.CONTENTS);
+        Widget frame = client.getWidget(InterfaceID.Music.FRAME);
         if (contents == null || frame == null) {
             hide();
             return;
@@ -123,7 +115,7 @@ public class MusicOpenButton {
             lastY = Integer.MIN_VALUE;
         }
 
-        Widget root = client.getWidget(MUSIC_GROUP, 0);
+        Widget root = client.getWidget(InterfaceID.Music.UNIVERSE);
         Widget toggleAll = findByAction(root, "Toggle all");
 
         int x, y;

@@ -3,7 +3,13 @@ package com.choiceman.menus;
 import com.choiceman.ChoiceManPlugin;
 import com.choiceman.data.ChoiceManUnlocks;
 import com.choiceman.data.ItemsRepository;
-import net.runelite.api.*;
+import net.runelite.api.Client;
+import net.runelite.api.EnumComposition;
+import net.runelite.api.EnumID;
+import net.runelite.api.Item;
+import net.runelite.api.ItemContainer;
+import net.runelite.api.Player;
+import net.runelite.api.WorldType;
 import net.runelite.api.coords.WorldArea;
 import net.runelite.api.coords.WorldPoint;
 import net.runelite.api.events.GameTick;
@@ -20,203 +26,313 @@ import java.util.HashSet;
 import java.util.Set;
 
 /**
- * Computes, each tick, which skill ops and spells are currently allowed under Choice Man rules.
- * Data produced here is consumed by {@link ActionHandler} to enable/disable menu interactions.
+ * Computes which skill operations and spells are currently usable under Choice Man rules.
  */
 @Singleton
-public class Restrictions {
+public class Restrictions
+{
     public static final int SPELL_REQUIREMENT_OVERLAY_NORMAL = InterfaceID.MagicSpellbook.TOOLTIP;
     public static final int AUTOCAST_REQUIREMENT_OVERLAY_NORMAL = InterfaceID.Autocast.INFO;
-    private static final int[] RUNE_POUCH_TYPE_VARBITS = {29, 1622, 1623, 14285, 15373, 15374};
-    private static final int[] RUNE_POUCH_AMOUNT_VARBITS = {1624, 1625, 1626, 14286, 15375, 15376};
-    private static final WorldArea FOUNTAIN_OF_RUNE_AREA = new WorldArea(3367, 3890, 13, 9, 0);
-    private final Set<SkillOp> enabledSkillOps = EnumSet.noneOf(SkillOp.class);
 
-    /**
-     * Canonical rune IDs currently available from unlocked providers (inventory/equipped/pouch).
-     */
+    private static final int[] RUNE_POUCH_TYPE_VARBITS = {
+            29,
+            1622,
+            1623,
+            14285,
+            15373,
+            15374
+    };
+
+    private static final int[] RUNE_POUCH_AMOUNT_VARBITS = {
+            1624,
+            1625,
+            1626,
+            14286,
+            15375,
+            15376
+    };
+
+    private static final WorldArea FOUNTAIN_OF_RUNE_AREA =
+            new WorldArea(3367, 3890, 13, 9, 0);
+
+    private final Set<SkillOp> enabledSkillOps = EnumSet.noneOf(SkillOp.class);
     private final Set<Integer> availableRunes = new HashSet<>();
 
-    @Inject
-    private ChoiceManPlugin plugin;
+    @Inject private ChoiceManPlugin plugin;
+    @Inject private Client client;
+    @Inject private ChoiceManUnlocks unlocks;
+    @Inject private ItemsRepository itemsRepo;
 
-    @Inject
-    private Client client;
+    private boolean isInFountainArea()
+    {
+        Player localPlayer = client.getLocalPlayer();
+        if (localPlayer == null)
+        {
+            return false;
+        }
 
-    @Inject
-    private ChoiceManUnlocks unlocks;
-
-    @Inject
-    private ItemsRepository itemsRepo;
-
-    private boolean isInFountainArea() {
-        Player lp = client.getLocalPlayer();
-        if (lp == null) return false;
-        WorldPoint wp = lp.getWorldLocation();
-        return wp != null && FOUNTAIN_OF_RUNE_AREA.contains(wp);
+        WorldPoint worldPoint = localPlayer.getWorldLocation();
+        return worldPoint != null && FOUNTAIN_OF_RUNE_AREA.contains(worldPoint);
     }
 
-    private boolean isInLMS() {
+    private boolean isInLMS()
+    {
         EnumSet<WorldType> worldTypes = client.getWorldType();
         return worldTypes != null && worldTypes.contains(WorldType.LAST_MAN_STANDING);
     }
 
     /**
-     * @return true if the item is tracked by Choice Man and its base is unlocked.
+     * Resolve the active Choice Man base for an item ID.
+     * Returns null when that item is not tracked by the current item repository.
      */
-    private boolean isUnlockedAndInPlay(int rawId) {
-        int id = plugin.getItemManager().canonicalize(rawId);
-        if (!plugin.isInPlay(id)) return false;
-        String base = itemsRepo.getBaseForId(id);
-        return base != null && unlocks.isBaseUnlocked(base);
-    }
+    private String trackedBaseFor(int rawItemId)
+    {
+        if (rawItemId <= 0)
+        {
+            return null;
+        }
 
-    /**
-     * Adds provided runes for a provider iff the provider is unlocked and (if required) equipped.
-     * Providers act as those runes: provided runes are counted even if the rune base itself isn't unlocked.
-     */
-    private void addProviderRunesIfUnlocked(int providerId, boolean providerMustBeEquipped, boolean actuallyEquipped) {
-        if (!isUnlockedAndInPlay(providerId)) return;
-        if (providerMustBeEquipped && !actuallyEquipped) return;
-
-        Set<Integer> provided = RuneProvider.getProvidedRunes(providerId);
-        if (provided.isEmpty()) return;
-
-        ItemManager im = plugin.getItemManager();
-        for (int runeId : provided) {
-            availableRunes.add(im.canonicalize(runeId));
+        try
+        {
+            int canonical = plugin.getItemManager().canonicalize(rawItemId);
+            return itemsRepo.getBaseForId(canonical);
+        }
+        catch (Exception ignored)
+        {
+            return null;
         }
     }
 
     /**
-     * Recomputes enabled tools and available runes. Runs on the client thread.
+     * Non-tracked items are unrestricted. Tracked items require their base unlock.
      */
+    private boolean isItemAllowed(int rawItemId)
+    {
+        String base = trackedBaseFor(rawItemId);
+        return base == null || unlocks.isBaseUsable(base);
+    }
+
+    private boolean isRuneProviderAllowed(int providerId)
+    {
+        String directBase = trackedBaseFor(providerId);
+        if (directBase != null)
+        {
+            return unlocks.isBaseUsable(directBase);
+        }
+
+        RuneProvider provider = RuneProvider.fromId(providerId);
+        if (provider == null)
+        {
+            return false;
+        }
+
+        return isItemAllowed(provider.getUnlockItemId());
+    }
+
+    private void addProvidedRunes(int providerId)
+    {
+        ItemManager itemManager = plugin.getItemManager();
+
+        for (int runeId : RuneProvider.getProvidedRunes(providerId))
+        {
+            try
+            {
+                availableRunes.add(itemManager.canonicalize(runeId));
+            }
+            catch (Exception ignored)
+            {
+                availableRunes.add(runeId);
+            }
+        }
+    }
+
+    private void addProviderRunesIfAllowed(int providerId)
+    {
+        if (!isRuneProviderAllowed(providerId))
+        {
+            return;
+        }
+
+        addProvidedRunes(providerId);
+    }
+
     @Subscribe
-    public void onGameTick(GameTick event) {
+    public void onGameTick(GameTick event)
+    {
         enabledSkillOps.clear();
         availableRunes.clear();
 
-        ItemManager im = plugin.getItemManager();
+        ItemContainer equippedItems = client.getItemContainer(InventoryID.WORN);
+        ItemContainer inventoryItems = client.getItemContainer(InventoryID.INV);
 
-        ItemContainer equipped = client.getItemContainer(InventoryID.WORN);
-        ItemContainer inv = client.getItemContainer(InventoryID.INV);
-
-        // Equipped items
-        if (equipped != null) {
-            for (Item item : equipped.getItems()) {
-                if (item == null) continue;
-
-                int id = im.canonicalize(item.getId());
-
-                SkillItem s = SkillItem.fromId(id);
-                if (s != null && (!s.isRequiresUnlock() || isUnlockedAndInPlay(id))) {
-                    enabledSkillOps.add(s.getOption());
+        if (equippedItems != null)
+        {
+            for (Item item : equippedItems.getItems())
+            {
+                if (item == null)
+                {
+                    continue;
                 }
 
-                if (RuneProvider.isEquippedProvider(id)) addProviderRunesIfUnlocked(id, true, true);
-                if (RuneProvider.isInvProvider(id)) addProviderRunesIfUnlocked(id, false, true);
+                int id = item.getId();
+                SkillItem skillItem = SkillItem.fromId(id);
+
+                if (skillItem != null
+                        && (!skillItem.isRequiresUnlock() || isItemAllowed(id)))
+                {
+                    enabledSkillOps.add(skillItem.getSkillOp());
+                }
+
+                if (RuneProvider.isEquippedProvider(id))
+                {
+                    addProviderRunesIfAllowed(id);
+                }
+
+                if (RuneProvider.isInvProvider(id))
+                {
+                    addProviderRunesIfAllowed(id);
+                }
             }
         }
 
-        // Inventory items
-        if (inv != null) {
-            for (Item item : inv.getItems()) {
-                if (item == null) continue;
-
-                int id = im.canonicalize(item.getId());
-
-                SkillItem s = SkillItem.fromId(id);
-                if (s != null && (!s.isRequiresUnlock() || isUnlockedAndInPlay(id))) {
-                    enabledSkillOps.add(s.getOption());
+        if (inventoryItems != null)
+        {
+            for (Item item : inventoryItems.getItems())
+            {
+                if (item == null)
+                {
+                    continue;
                 }
 
-                if (RuneProvider.isInvProvider(id)) addProviderRunesIfUnlocked(id, false, false);
+                int id = item.getId();
+                SkillItem skillItem = SkillItem.fromId(id);
+
+                if (skillItem != null
+                        && (!skillItem.isRequiresUnlock() || isItemAllowed(id)))
+                {
+                    enabledSkillOps.add(skillItem.getSkillOp());
+                }
+
+                if (RuneProvider.isInvProvider(id))
+                {
+                    addProviderRunesIfAllowed(id);
+                }
             }
         }
 
-        // Rune pouch slots behave like inventory providers
         EnumComposition pouchEnum = client.getEnum(EnumID.RUNEPOUCH_RUNE);
-        if (pouchEnum != null) {
-            for (int i = 0; i < RUNE_POUCH_AMOUNT_VARBITS.length; i++) {
-                int qty = client.getVarbitValue(RUNE_POUCH_AMOUNT_VARBITS[i]);
-                if (qty <= 0) continue;
+        if (pouchEnum != null)
+        {
+            for (int i = 0; i < RUNE_POUCH_AMOUNT_VARBITS.length; i++)
+            {
+                int quantity = client.getVarbitValue(RUNE_POUCH_AMOUNT_VARBITS[i]);
+                if (quantity <= 0)
+                {
+                    continue;
+                }
 
-                int typeIdx = client.getVarbitValue(RUNE_POUCH_TYPE_VARBITS[i]);
-                int runeId = pouchEnum.getIntValue(typeIdx);
+                int typeIndex = client.getVarbitValue(RUNE_POUCH_TYPE_VARBITS[i]);
+                int runeId = pouchEnum.getIntValue(typeIndex);
 
-                if (RuneProvider.isInvProvider(runeId) && isUnlockedAndInPlay(runeId)) {
-                    availableRunes.add(im.canonicalize(runeId));
+                if (RuneProvider.isInvProvider(runeId))
+                {
+                    addProviderRunesIfAllowed(runeId);
                 }
             }
         }
     }
 
-    /**
-     * @return true if the named skill option is currently enabled.
-     */
-    public boolean isSkillOpEnabled(String option) {
+    public boolean isSkillOpEnabled(String option)
+    {
         SkillOp op = SkillOp.fromString(option);
         return op != null && enabledSkillOps.contains(op);
     }
 
-    /**
-     * Determines whether a spell can be cast now under Choice Man rules.
-     * In Fountain of Rune or LMS, all spells are allowed.
-     * Blighted sack behavior:
-     * • SURGE sack: allowed if present.
-     * • Others: require the sack base to be unlocked and present.
-     * Otherwise, requirements are taken from the spell/auto-cast overlays and validated against {@link #availableRunes}.
-     */
-    public boolean isSpellOpEnabled(String spellName) {
-        if (isInFountainArea() || isInLMS()) return true;
+    public boolean isSpellOpEnabled(String spellName)
+    {
+        if (isInFountainArea() || isInLMS())
+        {
+            return true;
+        }
 
         BlightedSack sack = BlightedSack.fromSpell(spellName);
-        if (sack != null) {
+        if (sack != null)
+        {
             ItemContainer inv = client.getItemContainer(InventoryID.INV);
-            if (inv != null) {
-                boolean hasSack = false;
+            if (inv != null)
+            {
                 int sackId = sack.getSackItemId();
-                for (Item i : inv.getItems()) {
-                    if (i != null && i.getId() == sackId) {
-                        hasSack = true;
-                        break;
+
+                for (Item item : inv.getItems())
+                {
+                    if (item == null || item.getId() != sackId)
+                    {
+                        continue;
                     }
-                }
-                if (hasSack) {
-                    if (sack == BlightedSack.SURGE) return true;
-                    if (isUnlockedAndInPlay(sack.getSackItemId())) return true;
+
+                    if (sack == BlightedSack.SURGE || isItemAllowed(sackId))
+                    {
+                        return true;
+                    }
                 }
             }
         }
 
-        Widget autocast = client.getWidget(AUTOCAST_REQUIREMENT_OVERLAY_NORMAL);
-        if (autocast != null) return processChildren(autocast);
+        Widget autocastOverlay = client.getWidget(AUTOCAST_REQUIREMENT_OVERLAY_NORMAL);
+        if (autocastOverlay != null)
+        {
+            return processChildren(autocastOverlay);
+        }
 
-        Widget spell = client.getWidget(SPELL_REQUIREMENT_OVERLAY_NORMAL);
-        if (spell != null) return processChildren(spell);
+        Widget spellOverlay = client.getWidget(SPELL_REQUIREMENT_OVERLAY_NORMAL);
+        if (spellOverlay != null)
+        {
+            return processChildren(spellOverlay);
+        }
 
         return false;
     }
 
-    /**
-     * Validates that every rune listed by the given requirement overlay is tracked and currently provided.
-     */
-    public boolean processChildren(Widget widget) {
+    public boolean processChildren(Widget widget)
+    {
         Widget[] children = widget.getDynamicChildren();
-        if (children == null) return true;
-
-        ItemManager im = plugin.getItemManager();
-
-        for (Widget child : children) {
-            int rawId = child.getItemId();
-            if (rawId == -1) continue;
-
-            int id = im.canonicalize(rawId);
-
-            if (!plugin.isInPlay(id)) return false;
-
-            if (!availableRunes.contains(id)) return false;
+        if (children == null)
+        {
+            return true;
         }
+
+        ItemManager itemManager = plugin.getItemManager();
+
+        for (Widget child : children)
+        {
+            if (child == null)
+            {
+                continue;
+            }
+
+            int rawId = child.getItemId();
+            if (rawId == -1)
+            {
+                continue;
+            }
+
+            int id;
+            try
+            {
+                id = itemManager.canonicalize(rawId);
+            }
+            catch (Exception ignored)
+            {
+                id = rawId;
+            }
+
+            String base = itemsRepo.getBaseForId(id);
+            if (base != null && !availableRunes.contains(id))
+            {
+                return false;
+            }
+        }
+
         return true;
     }
 }

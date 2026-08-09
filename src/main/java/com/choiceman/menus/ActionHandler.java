@@ -1,22 +1,24 @@
 package com.choiceman.menus;
 
-import com.choiceman.ChoiceManPlugin;
 import com.choiceman.ChoiceManConfig;
+import com.choiceman.ChoiceManPlugin;
 import com.choiceman.data.ChoiceManUnlocks;
 import com.choiceman.data.ItemsRepository;
 import com.choiceman.filters.EnsouledHeadMapping;
-
 import lombok.Getter;
 import lombok.Setter;
-
 import net.runelite.api.Client;
 import net.runelite.api.GameState;
+import net.runelite.api.Item;
+import net.runelite.api.ItemContainer;
 import net.runelite.api.MenuAction;
 import net.runelite.api.MenuEntry;
 import net.runelite.api.events.MenuEntryAdded;
 import net.runelite.api.events.MenuOptionClicked;
 import net.runelite.api.events.WidgetClosed;
 import net.runelite.api.events.WidgetLoaded;
+import net.runelite.api.gameval.InterfaceID;
+import net.runelite.api.gameval.InventoryID;
 import net.runelite.client.eventbus.EventBus;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.game.ItemManager;
@@ -25,17 +27,22 @@ import net.runelite.client.util.Text;
 import javax.inject.Inject;
 import javax.inject.Singleton;
 import java.util.EnumSet;
+import java.util.HashSet;
 import java.util.Set;
 import java.util.function.Consumer;
 
 /**
- * Central gatekeeper for menu interactions:
- * - If an item is tracked in items.json but its base is not unlocked, interaction is blocked.
- * - Non-tracked items are never blocked.
- * - Special-cases ground items, "use item on ..." flows, and bank/deposit UI allowances.
+ * Central gatekeeper for Choice Man menu interactions.
  */
 @Singleton
-public class ActionHandler {
+public class ActionHandler
+{
+    private static final Set<MenuAction> DISABLED_ACTIONS = EnumSet.of(
+            MenuAction.CC_OP,
+            MenuAction.WIDGET_TARGET,
+            MenuAction.WIDGET_TARGET_ON_WIDGET
+    );
+
     private static final Set<MenuAction> GROUND_ACTIONS = EnumSet.of(
             MenuAction.GROUND_ITEM_FIRST_OPTION,
             MenuAction.GROUND_ITEM_SECOND_OPTION,
@@ -44,254 +51,346 @@ public class ActionHandler {
             MenuAction.GROUND_ITEM_FIFTH_OPTION
     );
 
-    // Modern target interactions for "Use item on ..."
-    private static final Set<MenuAction> USE_ACTIONS = EnumSet.of(
-            MenuAction.WIDGET_TARGET_ON_NPC,
-            MenuAction.WIDGET_TARGET_ON_PLAYER,
-            MenuAction.WIDGET_TARGET_ON_GROUND_ITEM,
-            MenuAction.WIDGET_TARGET_ON_WIDGET,
-            MenuAction.WIDGET_TARGET_ON_GAME_OBJECT
+    private static final Set<Integer> ALWAYS_ALLOW_OBJECT_IDS = new HashSet<>();
+
+    private static final EnumSet<MenuAction> GAME_OBJECT_ACTIONS = EnumSet.of(
+            MenuAction.GAME_OBJECT_FIRST_OPTION,
+            MenuAction.GAME_OBJECT_SECOND_OPTION,
+            MenuAction.GAME_OBJECT_THIRD_OPTION,
+            MenuAction.GAME_OBJECT_FOURTH_OPTION,
+            MenuAction.GAME_OBJECT_FIFTH_OPTION
     );
 
-    // UIs in which we allow a limited set of benign operations
-    private static final Set<Integer> ENABLED_UI_GROUPS = Set.of(
-            EnabledUI.BANK.getId(),
-            EnabledUI.DEPOSIT_BOX.getId()
-    );
+    private static final Set<Integer> ENABLED_UI_GROUPS = new HashSet<>();
 
-    private static final Consumer<MenuEntry> DISABLED = e -> {
-    };
+    private static final int ORBS_GROUP = InterfaceID.Orbs.UNIVERSE >>> 16;
 
-    @Inject
-    private Client client;
-    @Inject
-    private EventBus eventBus;
-    @Inject
-    private ChoiceManPlugin plugin;
-    @Inject
-    private ChoiceManConfig config;
-    @Inject
-    private Restrictions restrictions;
-    @Inject
-    private ChoiceManUnlocks unlocks;
-    @Inject
-    private ItemsRepository itemsRepo;
-    @Inject
-    private ItemManager itemManager;
+    static
+    {
+        ALWAYS_ALLOW_OBJECT_IDS.add(net.runelite.api.gameval.ObjectID.CATABOW);
+
+        for (EnabledUI ui : EnabledUI.values())
+        {
+            ENABLED_UI_GROUPS.add(ui.getId());
+        }
+    }
+
+    private static final Consumer<MenuEntry> DISABLED = e -> { };
+
+    @Inject private Client client;
+    @Inject private EventBus eventBus;
+    @Inject private ChoiceManPlugin plugin;
+    @Inject private ChoiceManConfig config;
+    @Inject private Restrictions restrictions;
+    @Inject private ChoiceManUnlocks unlocks;
+    @Inject private ItemsRepository itemsRepo;
+    @Inject private ItemManager itemManager;
 
     @Getter
     @Setter
     private int enabledUIOpen = -1;
 
-    private static boolean isGroundItem(MenuEntry entry) {
-        return GROUND_ACTIONS.contains(entry.getType());
-    }
-
-    private static boolean equalsAny(String s, String... opts) {
-        for (String o : opts) {
-            if (s.equalsIgnoreCase(o)) return true;
-        }
-        return false;
-    }
-
-    /**
-     * Ground-item safeguard used by click handler:
-     * consume the event if the ground item is tracked but not unlocked.
-     */
-    public static void handleGroundItems(
-            ItemManager itemManager,
-            ChoiceManUnlocks unlocks,
-            ItemsRepository itemsRepo,
-            MenuOptionClicked event,
-            ChoiceManPlugin plugin) {
-        final MenuAction act = event.getMenuAction();
-        if (act != null && GROUND_ACTIONS.contains(act)) {
-            final int rawItemId = event.getId() != -1 ? event.getId() : event.getMenuEntry().getItemId();
-            final int mapped = EnsouledHeadMapping.toTradeableId(rawItemId);
-            final int canonicalGroundId = itemManager.canonicalize(mapped);
-
-            final String base = itemsRepo.getBaseForId(canonicalGroundId);
-            if (base != null && !unlocks.isBaseUsable(base)) {
-                event.consume();
-            }
-        }
-    }
-
-    public void startUp() {
+    public void startUp()
+    {
         eventBus.register(this);
         eventBus.register(restrictions);
     }
 
-    public void shutDown() {
+    public void shutDown()
+    {
         eventBus.unregister(this);
         eventBus.unregister(restrictions);
         enabledUIOpen = -1;
     }
 
-    private boolean enabledUiOpen() {
-        return enabledUIOpen != -1;
+    private EnabledUI currentEnabledUi()
+    {
+        return enabledUIOpen == -1 ? null : EnabledUI.fromGroupId(enabledUIOpen);
     }
 
-    private boolean inactive() {
+    private boolean inactive()
+    {
         return client.getGameState().getState() < GameState.LOADING.getState();
     }
 
     @Subscribe
-    public void onWidgetClosed(WidgetClosed event) {
-        if (ENABLED_UI_GROUPS.contains(event.getGroupId())) {
+    public void onWidgetClosed(WidgetClosed event)
+    {
+        if (event.getGroupId() == enabledUIOpen)
+        {
             enabledUIOpen = -1;
         }
     }
 
     @Subscribe
-    public void onWidgetLoaded(WidgetLoaded event) {
-        if (ENABLED_UI_GROUPS.contains(event.getGroupId())) {
+    public void onWidgetLoaded(WidgetLoaded event)
+    {
+        if (ENABLED_UI_GROUPS.contains(event.getGroupId()))
+        {
             enabledUIOpen = event.getGroupId();
         }
     }
 
     /**
-     * Normalize a MenuEntryAdded into a canonical item id, or -1 if this row is not item-based.
+     * Normalize a MenuEntryAdded into a canonical item id, or -1 when the row is not item-based.
      */
-    private int getItemId(MenuEntryAdded event, MenuEntry entry) {
-        final MenuAction type = entry.getType();
-        final boolean hasItemId = entry.getItemId() > 0 || event.getItemId() > 0;
-        if (!GROUND_ACTIONS.contains(type) && !hasItemId) return -1;
+    private int getItemId(MenuEntryAdded event, MenuEntry entry)
+    {
+        MenuAction type = entry.getType();
+        boolean hasItemId = entry.getItemId() > 0 || event.getItemId() > 0;
+        if (!GROUND_ACTIONS.contains(type) && !hasItemId)
+        {
+            return -1;
+        }
 
-        final int raw = GROUND_ACTIONS.contains(type)
+        int raw = GROUND_ACTIONS.contains(type)
                 ? event.getIdentifier()
                 : Math.max(event.getItemId(), entry.getItemId());
-        final int mapped = EnsouledHeadMapping.toTradeableId(raw);
 
+        int mapped = EnsouledHeadMapping.toTradeableId(raw);
         return itemManager.canonicalize(mapped);
     }
 
     @Subscribe
-    public void onMenuEntryAdded(MenuEntryAdded event) {
-        if (inactive()) return;
+    public void onMenuEntryAdded(MenuEntryAdded event)
+    {
+        if (inactive())
+        {
+            return;
+        }
 
-        final MenuEntry entry = event.getMenuEntry();
-        final int id = getItemId(event, entry);
+        EnabledUI ui = currentEnabledUi();
+        if (ui != null && !ui.isGreyLockedItems())
+        {
+            return;
+        }
 
-        final boolean allow = isGroundItem(entry)
+        MenuEntry entry = event.getMenuEntry();
+        MenuAction action = entry.getType();
+        int id = getItemId(event, entry);
+
+        boolean allow = isGroundItem(entry)
                 ? !isLockedGroundItem(id)
-                : isEnabled(id, entry);
+                : isEnabled(id, entry, action);
 
-        if (!allow) {
-            final String option = Text.removeTags(entry.getOption());
-            final String target = Text.removeTags(entry.getTarget());
+        if (!allow)
+        {
+            String option = Text.removeTags(entry.getOption());
+            String target = Text.removeTags(entry.getTarget());
+
             entry.setOption("<col=808080>" + option);
             entry.setTarget("<col=808080>" + target);
             entry.onClick(DISABLED);
-            if (config.deprioritizeLockedOptions()) {
+
+            if (config.deprioritizeLockedOptions())
+            {
                 entry.setDeprioritized(true);
             }
         }
     }
 
     @Subscribe
-    public void onMenuOptionClicked(MenuOptionClicked event) {
-        if (event.getMenuEntry().onClick() == DISABLED) {
+    public void onMenuOptionClicked(MenuOptionClicked event)
+    {
+        if (event.getMenuEntry().onClick() == DISABLED)
+        {
             event.consume();
             return;
         }
 
         handleGroundItems(itemManager, unlocks, itemsRepo, event, plugin);
+    }
 
-        final MenuEntry entry = event.getMenuEntry();
-        final MenuAction action = entry.getType();
+    private static boolean isGroundItem(MenuEntry entry)
+    {
+        return GROUND_ACTIONS.contains(entry.getType());
+    }
 
-        if (USE_ACTIONS.contains(action)) {
-            final int usedItemId = entry.getItemId(); // must be > 0 to be an item
-            if (usedItemId > 0) {
-                final int useCanon = itemManager.canonicalize(usedItemId);
-                if (useCanon > 0) {
-                    final String base = itemsRepo.getBaseForId(useCanon);
-                    if (base != null && !unlocks.isBaseUsable(base)) {
-                        event.consume();
-                        return;
-                    }
-                }
-            }
-        }
+    /**
+     * Ground-item safeguard used by the click handler.
+     */
+    public static void handleGroundItems(
+            ItemManager itemManager,
+            ChoiceManUnlocks unlocks,
+            ItemsRepository itemsRepo,
+            MenuOptionClicked event,
+            ChoiceManPlugin plugin)
+    {
+        MenuAction action = event.getMenuAction();
+        if (action != null && GROUND_ACTIONS.contains(action))
+        {
+            int rawItemId = event.getId() != -1
+                    ? event.getId()
+                    : event.getMenuEntry().getItemId();
 
-        if (entry.getItemId() > 0 && !GROUND_ACTIONS.contains(action)) {
-            final String option = Text.removeTags(entry.getOption());
+            int mapped = EnsouledHeadMapping.toTradeableId(rawItemId);
+            int canonicalGroundId = itemManager.canonicalize(mapped);
+            String base = itemsRepo.getBaseForId(canonicalGroundId);
 
-            // Always allow these safe ops
-            if (equalsAny(option, "drop", "destroy", "release", "examine")) {
-                return;
-            }
-
-            // While bank/deposit UI is open, allow benign banking ops
-            if (enabledUiOpen()) {
-                if (option.startsWith("Deposit")
-                        || option.startsWith("Withdraw")
-                        || option.startsWith("Examine")
-                        || option.startsWith("Release")
-                        || option.startsWith("Destroy")) {
-                    return; // let it through
-                }
-            }
-
-            final int canon = itemManager.canonicalize(entry.getItemId());
-            if (canon > 0) {
-                final String base = itemsRepo.getBaseForId(canon);
-                if (base != null && !unlocks.isBaseUsable(base)) {
-                    event.consume(); // block everything else on locked bases
-                }
+            if (base != null && !unlocks.isBaseUsable(base))
+            {
+                event.consume();
             }
         }
     }
 
-    /**
-     * A ground item is blocked if it's tracked and its base is not unlocked.
-     */
-    private boolean isLockedGroundItem(int canonicalId) {
-        final String base = itemsRepo.getBaseForId(canonicalId);
+    private boolean isLockedGroundItem(int canonicalId)
+    {
+        if (canonicalId <= 0)
+        {
+            return false;
+        }
+
+        String base = itemsRepo.getBaseForId(canonicalId);
         return base != null && !unlocks.isBaseUsable(base);
+    }
+
+    private boolean isHealthOrbCure(MenuEntry entry)
+    {
+        if (entry.getType() != MenuAction.CC_OP)
+        {
+            return false;
+        }
+
+        if (!"cure".equalsIgnoreCase(Text.removeTags(entry.getOption())))
+        {
+            return false;
+        }
+
+        int w1 = entry.getParam1();
+        int w0 = entry.getParam0();
+        return (w1 >>> 16) == ORBS_GROUP || (w0 >>> 16) == ORBS_GROUP;
+    }
+
+    private boolean isFurnaceSmelt(MenuEntry entry)
+    {
+        if (!GAME_OBJECT_ACTIONS.contains(entry.getType()))
+        {
+            return false;
+        }
+
+        String option = Text.removeTags(entry.getOption());
+        String target = Text.removeTags(entry.getTarget());
+
+        return "smelt".equalsIgnoreCase(option)
+                && target != null
+                && target.toLowerCase().contains("furnace");
     }
 
     /**
      * Core gating for non-ground rows.
-     * - Always allow safe operations (examine/drop/destroy/release).
-     * - Defer skill/spell rows to {@link Restrictions}.
-     * - If the row references a tracked item whose base is locked, only allow the safe operations.
-     * - While bank/deposit UI is open, only allow benign banking operations.
      */
-    private boolean isEnabled(int id, MenuEntry entry) {
-        final String option = Text.removeTags(entry.getOption());
-        final String target = Text.removeTags(entry.getTarget());
-
-        // Always allow harmless operations
-        if (equalsAny(option, "drop", "destroy", "release", "examine")) return true;
-
-        // Skill/spell gating
-        if (SkillOp.isSkillOp(option)) return restrictions.isSkillOpEnabled(option);
-        if (Spell.isSpell(option)) return restrictions.isSpellOpEnabled(option);
-        if (Spell.isSpell(target)) return restrictions.isSpellOpEnabled(target);
-
-        if (id <= 0) return true;
-
-        // Ignore untracked items
-        if (!plugin.isInPlay(id)) return true;
-
-        // Tracked: enforce base unlock
-        final String base = itemsRepo.getBaseForId(id);
-        final boolean baseUsable = base != null && unlocks.isBaseUsable(base);
-
-        if (enabledUiOpen()) {
-            return option.startsWith("Deposit")
-                    || option.startsWith("Withdraw")
-                    || option.startsWith("Examine")
-                    || option.startsWith("Release")
-                    || option.startsWith("Destroy");
+    private boolean isEnabled(int id, MenuEntry entry, MenuAction action)
+    {
+        if (isHealthOrbCure(entry) || isFurnaceSmelt(entry))
+        {
+            return true;
         }
 
-        if (!baseUsable) {
-            return equalsAny(option, "examine", "drop", "destroy", "release");
+        String option = Text.removeTags(entry.getOption());
+        String target = Text.removeTags(entry.getTarget());
+
+        EnabledUI ui = currentEnabledUi();
+        if (ui != null && ui.isAllowAllActions())
+        {
+            return true;
         }
 
-        return true;
+        if (GAME_OBJECT_ACTIONS.contains(action)
+                && ALWAYS_ALLOW_OBJECT_IDS.contains(entry.getIdentifier()))
+        {
+            return true;
+        }
+
+        if (option.equalsIgnoreCase("drop") || option.equalsIgnoreCase("check"))
+        {
+            return true;
+        }
+
+        if (option.equalsIgnoreCase("clean") || option.equalsIgnoreCase("rub"))
+        {
+            if (!plugin.isInPlay(id))
+            {
+                return true;
+            }
+
+            return isItemUsable(id);
+        }
+
+        // Barehand barbarian fishing / Tempoross spirit pool exception.
+        if ("harpoon".equalsIgnoreCase(option) && !hasAnyHarpoonInInvOrWorn())
+        {
+            String normalizedTarget = target.toLowerCase();
+            if (normalizedTarget.contains("fishing spot") || normalizedTarget.contains("spirit pool"))
+            {
+                return true;
+            }
+        }
+
+        if (SkillOp.isSkillOp(option))
+        {
+            return restrictions.isSkillOpEnabled(option);
+        }
+
+        if (Spell.isSpell(option))
+        {
+            return restrictions.isSpellOpEnabled(option);
+        }
+
+        if (Spell.isSpell(target))
+        {
+            return restrictions.isSpellOpEnabled(target);
+        }
+
+        boolean enabled = !DISABLED_ACTIONS.contains(action);
+        if (enabled)
+        {
+            return true;
+        }
+
+        if (id == 0 || id == -1 || !plugin.isInPlay(id))
+        {
+            return true;
+        }
+
+        return isItemUsable(id);
+    }
+
+    private boolean isItemUsable(int itemId)
+    {
+        String base = itemsRepo.getBaseForId(itemId);
+        return base != null && unlocks.isBaseUsable(base);
+    }
+
+    private boolean hasAnyHarpoonInInvOrWorn()
+    {
+        ItemContainer worn = client.getItemContainer(InventoryID.WORN);
+        ItemContainer inv = client.getItemContainer(InventoryID.INV);
+
+        if (worn != null)
+        {
+            for (Item item : worn.getItems())
+            {
+                SkillItem skillItem = SkillItem.fromId(item.getId());
+                if (skillItem != null && skillItem.getSkillOp() == SkillOp.HARPOON)
+                {
+                    return true;
+                }
+            }
+        }
+
+        if (inv != null)
+        {
+            for (Item item : inv.getItems())
+            {
+                SkillItem skillItem = SkillItem.fromId(item.getId());
+                if (skillItem != null && skillItem.getSkillOp() == SkillOp.HARPOON)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 }

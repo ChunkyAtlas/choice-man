@@ -43,12 +43,15 @@ public enum RuneProvider
     KODAI_WAND(true, ItemID.KODAI_WAND, WATER_RUNE),
     EARTH_BATTLESTAFF(true, ItemID.EARTH_BATTLESTAFF, EARTH_RUNE),
     FIRE_BATTLESTAFF(true, ItemID.FIRE_BATTLESTAFF, FIRE_RUNE),
-    TOME_OF_FIRE(true, ItemID.TOME_OF_FIRE, FIRE_RUNE),
-    TOME_OF_WATER(true, ItemID.TOME_OF_WATER, WATER_RUNE),
-    TOME_OF_EARTH(true, ItemID.TOME_OF_EARTH, EARTH_RUNE),
+
+    // Charged tomes are non-tradeable runtime forms. Their Choice Man unlock is the
+    // corresponding tradeable empty tome base.
+    TOME_OF_FIRE(true, ItemID.TOME_OF_FIRE, ItemID.TOME_OF_FIRE_UNCHARGED, FIRE_RUNE),
+    TOME_OF_WATER(true, ItemID.TOME_OF_WATER, ItemID.TOME_OF_WATER_UNCHARGED, WATER_RUNE),
+    TOME_OF_EARTH(true, ItemID.TOME_OF_EARTH, ItemID.TOME_OF_EARTH_UNCHARGED, EARTH_RUNE),
 
     // Combo runes
-    AETHER_RUNE(false,ItemID.AETHERRUNE,COSMIC_RUNE, SOUL_RUNE),
+    AETHER_RUNE(false, ItemID.AETHERRUNE, COSMIC_RUNE, SOUL_RUNE),
     MIST_RUNE(false, ItemID.MISTRUNE, AIR_RUNE, WATER_RUNE),
     DUST_RUNE(false, ItemID.DUSTRUNE, AIR_RUNE, EARTH_RUNE),
     MUD_RUNE(false, ItemID.MUDRUNE, WATER_RUNE, EARTH_RUNE),
@@ -74,47 +77,84 @@ public enum RuneProvider
     MYSTIC_LAVA_STAFF(true, ItemID.MYSTIC_LAVA_STAFF, EARTH_RUNE, FIRE_RUNE),
     MYSTIC_LAVA_STAFF_OR(true, ItemID.MYSTIC_LAVA_STAFF_PRETTY, EARTH_RUNE, FIRE_RUNE),
     TWINFLAME_STAFF(true, ItemID.TWINFLAME_STAFF, WATER_RUNE, FIRE_RUNE),
-
-    // Other
-    BRYOPHYTAS_STAFF_CHARGED(true, ItemID.NATURE_STAFF_CHARGED, NATURE_RUNE);
+    BRYOPHYTAS_STAFF_CHARGED(
+            true,
+            ItemID.NATURE_STAFF_CHARGED,
+            ItemID.NATURE_STAFF_UNCHARGED,
+            NATURE_RUNE
+    );
 
     private final boolean requiresEquipped;
     private final int id;
+    private final int unlockItemId;
     private final HashSet<Integer> provides = new HashSet<>();
 
     RuneProvider(int id)
     {
         this.requiresEquipped = false;
         this.id = id;
+        this.unlockItemId = id;
         this.provides.add(id);
     }
 
     RuneProvider(boolean requiresEquipped, int id, RuneProvider... provides)
     {
+        this(requiresEquipped, id, id, provides);
+    }
+
+    RuneProvider(boolean requiresEquipped, int id, int unlockItemId, RuneProvider... provides)
+    {
         this.requiresEquipped = requiresEquipped;
         this.id = id;
-        for (RuneProvider runeProvider : provides) this.provides.addAll(runeProvider.getProvides());
+        this.unlockItemId = unlockItemId;
+
+        for (RuneProvider runeProvider : provides)
+        {
+            this.provides.addAll(runeProvider.getProvides());
+        }
     }
 
     private static final HashSet<Integer> EQUIPPED_PROVIDERS = new HashSet<>();
     private static final HashSet<Integer> INV_PROVIDERS = new HashSet<>();
     private static final HashMap<Integer, HashSet<Integer>> PROVIDER_TO_PROVIDED = new HashMap<>();
+    private static final HashMap<Integer, RuneProvider> ID_TO_PROVIDER = new HashMap<>();
 
     static
     {
         for (RuneProvider runeProvider : RuneProvider.values())
         {
             PROVIDER_TO_PROVIDED.put(runeProvider.getId(), runeProvider.getProvides());
+            ID_TO_PROVIDER.put(runeProvider.getId(), runeProvider);
+
             if (runeProvider.isRequiresEquipped())
             {
                 EQUIPPED_PROVIDERS.add(runeProvider.getId());
-            } else {
+            }
+            else
+            {
                 INV_PROVIDERS.add(runeProvider.getId());
             }
         }
     }
 
-    public static boolean isEquippedProvider(int id) { return EQUIPPED_PROVIDERS.contains(id); }
-    public static boolean isInvProvider(int id) { return INV_PROVIDERS.contains(id); }
-    public static HashSet<Integer> getProvidedRunes(int id) { return PROVIDER_TO_PROVIDED.get(id); }
+    public static boolean isEquippedProvider(int id)
+    {
+        return EQUIPPED_PROVIDERS.contains(id);
+    }
+
+    public static boolean isInvProvider(int id)
+    {
+        return INV_PROVIDERS.contains(id);
+    }
+
+    public static HashSet<Integer> getProvidedRunes(int id)
+    {
+        HashSet<Integer> provided = PROVIDER_TO_PROVIDED.get(id);
+        return provided == null ? new HashSet<>() : provided;
+    }
+
+    public static RuneProvider fromId(int id)
+    {
+        return ID_TO_PROVIDER.get(id);
+    }
 }
